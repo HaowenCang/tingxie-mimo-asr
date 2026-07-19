@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { MediaLibrarySnapshot, TranscriptResult } from '../../electron/types'
+import { summarizeTranscript } from '../../electron/transcript-summary'
 import { MediaLibraryView } from './MediaLibraryView'
 
 describe('legacy transcript recovery', () => {
@@ -18,7 +19,7 @@ describe('legacy transcript recovery', () => {
 
     const markup = renderToStaticMarkup(<MediaLibraryView
       library={library}
-      history={[oldTranscript]}
+      history={[summarizeTranscript(oldTranscript)]}
       onLibraryChange={() => undefined}
       onOpenTranscript={() => undefined}
       onTranscribe={() => undefined}

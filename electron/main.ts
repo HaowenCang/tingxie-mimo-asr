@@ -50,7 +50,9 @@ import {
 } from './ai-chat'
 import { resolveProviderSystemPrompt } from './ai-provider-defaults'
 import { generateTranscriptAnalysis } from './analysis'
-import { attachManagedMediaToHistory, ensureHistoryBackup } from './history-recovery'
+import { ensureHistoryBackup } from './history-recovery'
+import { TranscriptStore } from './transcript-store'
+import { summarizeTranscript } from './transcript-summary'
 import {
   createMediaFolder,
   importMediaAssets,
@@ -81,6 +83,7 @@ import {
   type SelectedMedia,
   type ServiceMode,
   type TranscriptResult,
+  type TranscriptSummary,
   type TranscriptAnalysis,
 } from './types'
 
@@ -158,6 +161,14 @@ function historyPath(): string {
 
 function historyRecoveryBackupPath(): string {
   return path.join(app.getPath('userData'), 'backups', 'history-before-media-library-0.11.json')
+}
+
+function splitHistoryBackupPath(): string {
+  return path.join(app.getPath('userData'), 'backups', 'history-before-split-store-0.12.json')
+}
+
+function transcriptStoreRoot(): string {
+  return path.join(app.getPath('userData'), 'history')
 }
 
 function chatsPath(): string {
@@ -243,11 +254,11 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8')
 }
 
-// ponytail: in-memory cache for the three hot-path JSON stores — read once at startup, write-through on mutation.
+// ponytail: in-memory cache for the remaining hot-path JSON stores — read once, write-through on mutation.
 // If a migration step needs a forced re-read (unlikely), the cache can be cleared per-store.
 let cachedSettings: StoredSettings | undefined
-let cachedHistory: TranscriptResult[] | undefined
 let cachedChats: Record<string, AIChatSession> | undefined
+let transcriptStore: TranscriptStore | undefined
 
 async function readCachedSettings(): Promise<StoredSettings> {
   if (cachedSettings) return cachedSettings
@@ -257,13 +268,14 @@ async function readCachedSettings(): Promise<StoredSettings> {
 
 function invalidateSettings(): void { cachedSettings = undefined }
 
-async function readCachedHistory(): Promise<TranscriptResult[]> {
-  if (cachedHistory) return cachedHistory
-  cachedHistory = await readJson<TranscriptResult[]>(historyPath(), [])
-  return cachedHistory
+function getTranscriptStore(): TranscriptStore {
+  transcriptStore ??= new TranscriptStore({
+    storeRoot: transcriptStoreRoot(),
+    legacyFile: historyPath(),
+    backupFile: splitHistoryBackupPath(),
+  })
+  return transcriptStore
 }
-
-function invalidateHistory(): void { cachedHistory = undefined }
 
 async function readCachedChats(): Promise<Record<string, AIChatSession>> {
   if (cachedChats) return cachedChats
@@ -815,11 +827,8 @@ async function requestTranscript(
   return outcome
 }
 
-async function saveHistory(result: TranscriptResult): Promise<void> {
-  const items = await readCachedHistory()
-  const next = [result, ...items.filter((item) => item.id !== result.id)]
-  cachedHistory = next
-  await writeJson(historyPath(), next)
+async function saveHistory(result: TranscriptResult): Promise<TranscriptSummary> {
+  return getTranscriptStore().save(result)
 }
 
 async function scanMediaDirectory(directory: string): Promise<SelectedMedia[]> {
@@ -868,11 +877,8 @@ interface StoredTranscriptRepairSummary {
 }
 
 async function repairStoredTranscript(recordId: string): Promise<StoredTranscriptRepairSummary> {
-  const file = historyPath()
-  const items = await readJson<TranscriptResult[]>(file, [])
-  const recordIndex = items.findIndex((item) => item.id === recordId)
-  if (recordIndex < 0) throw new Error(`未找到转写记录：${recordId}`)
-  const record = items[recordIndex]
+  const record = await getTranscriptStore().get(recordId)
+  if (!record) throw new Error(`未找到转写记录：${recordId}`)
   if (!record.sourcePath) throw new Error('该转写记录没有可用的源文件路径')
   if (!record.chunks?.length) throw new Error('该转写记录没有保存切片信息')
   await fs.access(record.sourcePath)
@@ -896,8 +902,8 @@ async function repairStoredTranscript(recordId: string): Promise<StoredTranscrip
   const apiConfig = await getApiConfig()
   const language = settings.language || 'auto'
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupPath = path.join(path.dirname(file), `history.backup-before-quality-repair-${timestamp}.json`)
-  await fs.copyFile(file, backupPath)
+  const backupPath = path.join(app.getPath('userData'), 'backups', `transcript-${encodeURIComponent(recordId)}-before-quality-repair-${timestamp}.json`)
+  await writeJson(backupPath, record)
 
   const controller = new AbortController()
   const job = { controller } as { controller: AbortController; process?: ChildProcessWithoutNullStreams }
@@ -1035,8 +1041,7 @@ async function repairStoredTranscript(recordId: string): Promise<StoredTranscrip
       failedSegmentCount,
       analysis: undefined,
     }
-    items[recordIndex] = repairedRecord
-    await writeJson(file, items)
+    await getTranscriptStore().save(repairedRecord)
 
     const replacementChunks = [...replacements.values()].flat()
     const summary: StoredTranscriptRepairSummary = {
@@ -1186,8 +1191,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('library:recover-history-media', async (_event, transcriptId: string): Promise<MediaLibrarySnapshot> => {
     await ensureHistoryBackup(historyPath(), historyRecoveryBackupPath())
-    const history = await readCachedHistory()
-    const transcript = history.find((item) => item.id === transcriptId)
+    const transcript = await getTranscriptStore().get(transcriptId)
     if (!transcript) throw new Error('未找到该历史转写')
     if (!transcript.sourcePath) throw new Error('该记录没有保存原音频路径，可重新导入音频后手动核对')
     const sourceStat = await fs.stat(transcript.sourcePath).catch(() => undefined)
@@ -1223,8 +1227,7 @@ app.whenReady().then(async () => {
       assets: index.assets.map((item) => item.id === asset.id ? { ...item, duration: transcript.duration || item.duration } : item),
     }
     await writeMediaLibrary(settings, index)
-    cachedHistory = attachManagedMediaToHistory(history, transcript.id, asset.id)
-    await writeJson(historyPath(), cachedHistory)
+    await getTranscriptStore().save({ ...transcript, mediaId: asset.id })
     return publicMediaLibrary(settings, index)
   })
 
@@ -1723,15 +1726,19 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('history:get', async () => {
     await ensureHistoryBackup(historyPath(), historyRecoveryBackupPath())
-    return readCachedHistory()
+    return getTranscriptStore().listSummaries()
   })
   ipcMain.handle('history:update', async (_event, result: TranscriptResult) => {
-    await saveHistory(result)
-    return result
+    return saveHistory(result)
+  })
+  ipcMain.handle('history:record:get', async (_event, id: string) => {
+    return getTranscriptStore().get(id)
+  })
+  ipcMain.handle('history:segment:patch', async (_event, input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }) => {
+    return summarizeTranscript(await getTranscriptStore().patchSegment(input.transcriptId, input.segmentId, input.patch))
   })
   ipcMain.handle('media:get-url', async (_event, transcriptId: string) => {
-    const items = await readCachedHistory()
-    const transcript = items.find((item) => item.id === transcriptId)
+    const transcript = await getTranscriptStore().get(transcriptId)
     const settings = await readCachedSettings()
     const library = await readMediaLibrary(settings)
     const managedAsset = transcript?.mediaId ? library.assets.find((asset) => asset.id === transcript.mediaId) : undefined
@@ -1741,9 +1748,7 @@ app.whenReady().then(async () => {
     return encodeURI(`file:///${normalized}`)
   })
   ipcMain.handle('history:delete', async (_event, id: string) => {
-    const items = await readCachedHistory()
-    cachedHistory = items.filter((item) => item.id !== id)
-    await writeJson(historyPath(), cachedHistory)
+    await getTranscriptStore().delete(id)
     const sessions = await readChatSessions()
     delete sessions[id]
     cachedChats = sessions

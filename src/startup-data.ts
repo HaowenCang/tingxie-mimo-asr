@@ -1,16 +1,16 @@
-import type { AISettings, MediaLibrarySnapshot, TranscriptResult } from '../electron/types'
+import type { AISettings, MediaLibrarySnapshot, TranscriptSummary } from '../electron/types'
 import type { AppSettings } from './types'
 
 export interface StartupDataApi {
   getSettings(): Promise<AppSettings>
-  getHistory(): Promise<TranscriptResult[]>
+  getHistory(): Promise<TranscriptSummary[]>
   getAISettings(): Promise<AISettings>
   getMediaLibrary(): Promise<MediaLibrarySnapshot>
 }
 
 export interface StartupData {
   settings?: AppSettings
-  history?: TranscriptResult[]
+  history?: TranscriptSummary[]
   aiSettings?: AISettings
   mediaLibrary?: MediaLibrarySnapshot
   errors: Array<{ resource: 'settings' | 'history' | 'aiSettings' | 'mediaLibrary'; error: unknown }>
@@ -32,7 +32,7 @@ export async function loadStartupData(api: StartupDataApi): Promise<StartupData>
       return
     }
     if (resource === 'settings') result.settings = entry.value as AppSettings
-    if (resource === 'history') result.history = entry.value as TranscriptResult[]
+    if (resource === 'history') result.history = entry.value as TranscriptSummary[]
     if (resource === 'aiSettings') result.aiSettings = entry.value as AISettings
     if (resource === 'mediaLibrary') result.mediaLibrary = entry.value as MediaLibrarySnapshot
   })
