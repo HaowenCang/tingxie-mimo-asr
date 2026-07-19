@@ -370,7 +370,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .provider-field.wide { grid-column: 1 / -1; }
 .provider-field > span { display: flex; justify-content: space-between; }
 .provider-field small { color: var(--green); font-size: 0.5625rem; font-weight: 560; }
-.provider-field textarea { width: 100%; min-height: 184px; padding: 10px 11px; border-radius: 13px; resize: vertical; font: 10px/1.6 "Microsoft YaHei UI", sans-serif; }
+.provider-field textarea { width: 100%; min-height: 184px; padding: 10px 11px; border-radius: 13px; resize: vertical; font-family: "Microsoft YaHei UI", sans-serif; font-size: var(--chat-font-size); line-height: 1.65; }
 .provider-key-input { height: 39px; padding: 0 9px; border-radius: 12px; display: flex; align-items: center; gap: 7px; color: var(--muted); }
 .provider-key-input input { flex: 1; min-width: 0; height: auto; padding: 0; border: 0; outline: 0; color: var(--text); background: transparent; }
 .provider-key-input button { border: 0; padding: 4px; display: grid; place-items: center; color: var(--muted); background: transparent; cursor: pointer; }

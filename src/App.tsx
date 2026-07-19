@@ -1,6 +1,7 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult } from '../electron/types'
+import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { AIChatPanel } from './components/AIChatPanel'
 import { MediaLibraryView } from './components/MediaLibraryView'
 import { QueuePanel } from './components/QueuePanel'
@@ -12,6 +13,7 @@ import { TranscriptDetail } from './components/TranscriptDetail'
 import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
+import { loadStartupData } from './startup-data'
 
 const demoParameters = new URLSearchParams(location.search)
 const isDemo = import.meta.env.DEV && demoParameters.has('demo')
@@ -60,12 +62,12 @@ const demoHistory = demoFiles.flatMap((file) => file.result ? [file.result] : []
 
 const initialAISettings: AISettings = {
   providers: [
-    { id: 'mimo-payg', name: '小米 MiMo（按量）', kind: 'mimo-payg', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5', contextWindow: 1_048_576, maxOutputTokens: 8192, systemPrompt: '结合转写内容和一般知识回答用户问题。', hasApiKey: isDemo, builtIn: true },
-    { id: 'mimo-token-plan', name: '小米 MiMo（Token Plan）', kind: 'mimo-token-plan', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2.5', contextWindow: 1_048_576, maxOutputTokens: 8192, systemPrompt: '结合转写内容和一般知识回答用户问题。', hasApiKey: isDemo, builtIn: true },
+    { id: 'mimo-payg', name: '小米 MiMo（按量）', kind: 'mimo-payg', baseUrl: 'https://api.xiaomimimo.com/v1', model: 'mimo-v2.5', contextWindow: 1_048_576, maxOutputTokens: 8192, systemPrompt: DEFAULT_AI_SYSTEM_PROMPT, hasApiKey: isDemo, builtIn: true },
+    { id: 'mimo-token-plan', name: '小米 MiMo（Token Plan）', kind: 'mimo-token-plan', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1', model: 'mimo-v2.5', contextWindow: 1_048_576, maxOutputTokens: 8192, systemPrompt: DEFAULT_AI_SYSTEM_PROMPT, hasApiKey: isDemo, builtIn: true },
   ],
   selectedProviderId: 'mimo-payg',
   tokenPlanAcknowledged: false,
-  defaultSystemPrompt: '结合转写内容和一般知识回答用户问题。',
+  defaultSystemPrompt: DEFAULT_AI_SYSTEM_PROMPT,
 }
 
 const demoLibrary: MediaLibrarySnapshot = {
@@ -180,8 +182,13 @@ export function App() {
 
   useEffect(() => {
     if (!window.tingxie || isDemo) return
-    Promise.all([window.tingxie.getSettings(), window.tingxie.getHistory(), window.tingxie.getAISettings(), window.tingxie.getMediaLibrary()])
-      .then(([nextSettings, nextHistory, nextAISettings, nextLibrary]) => { setSettings(nextSettings); setHistory(nextHistory); setAISettings(nextAISettings); setMediaLibrary(nextLibrary) })
+    loadStartupData(window.tingxie)
+      .then((data) => {
+        if (data.settings) setSettings(data.settings)
+        if (data.history) setHistory(data.history)
+        if (data.aiSettings) setAISettings(data.aiSettings)
+        if (data.mediaLibrary) setMediaLibrary(data.mediaLibrary)
+      })
       .finally(() => setLoadingSettings(false))
     return window.tingxie.onProgress((event) => scheduleProgressUpdate(event))
   }, [])
