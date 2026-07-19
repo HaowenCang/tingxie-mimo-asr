@@ -1,17 +1,17 @@
 import { CheckSquare, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderPlus, Library, Search, Square, Trash2, Upload, X } from 'lucide-react'
 import { memo, useDeferredValue, useMemo, useState } from 'react'
-import type { MediaAsset, MediaLibrarySnapshot, TranscriptResult } from '../../electron/types'
+import type { MediaAsset, MediaLibrarySnapshot, TranscriptSummary } from '../../electron/types'
 import { formatBytes, formatDuration } from '../utils'
 
 interface MediaLibraryViewProps {
   library: MediaLibrarySnapshot
-  history: TranscriptResult[]
+  history: TranscriptSummary[]
   onLibraryChange(library: MediaLibrarySnapshot): void
-  onOpenTranscript(result: TranscriptResult): void
+  onOpenTranscript(result: TranscriptSummary): void
   onTranscribe(asset: MediaAsset): void
   onImportFiles(folderId?: string): void
   onImportFolder(folderId?: string): void
-  onRecoverHistoryMedia?(result: TranscriptResult): Promise<void>
+  onRecoverHistoryMedia?(result: TranscriptSummary): Promise<void>
 }
 
 type Scope = 'all' | 'unfiled' | string
@@ -45,7 +45,7 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
     return candidates.filter((item) => {
       const itemStatus = item.outcome === 'failed' ? 'failed' : item.outcome === 'partial' ? 'partial' : 'transcribed'
       const hasStatus = status === 'all' || status === itemStatus
-      const matches = !deferredQuery || `${item.fileName} ${item.text}`.toLocaleLowerCase().includes(deferredQuery)
+      const matches = !deferredQuery || `${item.fileName} ${item.preview}`.toLocaleLowerCase().includes(deferredQuery)
       return hasStatus && matches
     })
   }, [history, unlinkedHistory, scope, status, deferredQuery])
@@ -80,7 +80,7 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
     onLibraryChange(await window.tingxie.renameMediaAsset(focused.id, name))
   }
 
-  async function recoverHistoryMedia(item: TranscriptResult) {
+  async function recoverHistoryMedia(item: TranscriptSummary) {
     if (!onRecoverHistoryMedia) return
     setRecoveryMessage('')
     try {
@@ -141,8 +141,8 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
             </div>)}
             {visibleHistory.map((item) => <div key={`history-${item.id}`} className="library-table-row legacy-transcript-row" role="row">
               <button aria-label={`打开转写：${item.fileName}`} title="打开转写" onClick={() => onOpenTranscript(item)}><FileText size={16} /></button>
-              <div className="library-file-name"><span><FileText size={18} /></span><div><strong>{item.fileName}</strong><small>历史转写 · 文字已恢复</small>{item.sourcePath && !linkedTranscriptIds.has(item.id) && onRecoverHistoryMedia ? <button className="legacy-recover-button" onClick={() => void recoverHistoryMedia(item)}>迁入原音频</button> : null}</div></div>
-              <span>{formatDuration(item.duration || 0)}</span><span>{item.segments.length} 段</span><span><i className={`asset-status ${item.outcome === 'failed' ? 'failed' : item.outcome === 'partial' ? 'partial' : 'transcribed'}`}>{item.outcome === 'failed' ? '失败记录' : item.outcome === 'partial' ? '部分完成' : '文字完整'}</i></span><span>{new Date(item.createdAt).toLocaleDateString()}</span>
+              <div className="library-file-name"><span><FileText size={18} /></span><div><strong>{item.fileName}</strong><small>历史转写 · 文字已恢复</small>{item.sourceAvailable && !linkedTranscriptIds.has(item.id) && onRecoverHistoryMedia ? <button className="legacy-recover-button" onClick={() => void recoverHistoryMedia(item)}>迁入原音频</button> : null}</div></div>
+              <span>{formatDuration(item.duration || 0)}</span><span>{item.segmentCount} 段</span><span><i className={`asset-status ${item.outcome === 'failed' ? 'failed' : item.outcome === 'partial' ? 'partial' : 'transcribed'}`}>{item.outcome === 'failed' ? '失败记录' : item.outcome === 'partial' ? '部分完成' : '文字完整'}</i></span><span>{new Date(item.createdAt).toLocaleDateString()}</span>
             </div>)}
             {!visible.length && !visibleHistory.length && <div className="library-empty"><FilePlus2 size={30} /><strong>{deferredQuery ? '没有匹配的媒体或转写' : scope === 'history' ? '还没有历史转写' : '此分组还没有文件'}</strong><span>{deferredQuery ? '尝试更换关键词或状态筛选' : scope === 'history' ? '旧版本转写记录会安全显示在这里' : '导入过往录音，或从“新建转写”添加文件'}</span></div>}
           </div>

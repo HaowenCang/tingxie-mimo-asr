@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from '../electron/types'
 
 declare global {
   interface Window {
@@ -35,8 +35,10 @@ declare global {
       generateAnalysis(input: { transcript: TranscriptResult; providerId?: string }): Promise<TranscriptResult>
       cancelAIMessage(requestId: string): Promise<boolean>
       onAIStream(callback: (event: AIStreamEvent) => void): () => void
-      getHistory(): Promise<TranscriptResult[]>
-      updateHistory(result: TranscriptResult): Promise<TranscriptResult>
+      getHistory(): Promise<TranscriptSummary[]>
+      getTranscript(id: string): Promise<TranscriptResult | undefined>
+      updateHistory(result: TranscriptResult): Promise<TranscriptSummary>
+      patchTranscriptSegment(input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }): Promise<TranscriptSummary>
       getMediaUrl(transcriptId: string): Promise<string>
       deleteHistory(id: string): Promise<boolean>
       copyText(text: string): Promise<boolean>

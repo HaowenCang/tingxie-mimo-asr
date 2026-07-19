@@ -1,12 +1,12 @@
 import { CalendarDays, FileText, Search, Trash2 } from 'lucide-react'
 import { memo } from 'react'
-import type { TranscriptResult } from '../../electron/types'
+import type { TranscriptSummary } from '../../electron/types'
 import { formatDuration } from '../utils'
 
 interface HistoryViewProps {
-  items: TranscriptResult[]
-  onOpen(item: TranscriptResult): void
-  onDelete(item: TranscriptResult): void
+  items: TranscriptSummary[]
+  onOpen(item: TranscriptSummary): void
+  onDelete(item: TranscriptSummary): void
 }
 
 export const HistoryView = memo(function HistoryView({ items, onOpen, onDelete }: HistoryViewProps) {
@@ -16,7 +16,7 @@ export const HistoryView = memo(function HistoryView({ items, onOpen, onDelete }
       {items.length ? <div className="history-table">
         <div className="history-table-head"><span>文件</span><span>时长</span><span>创建时间</span><span /></div>
         {items.map((item) => <div className="history-row" role="button" tabIndex={0} key={item.id} onClick={() => onOpen(item)} onKeyDown={(event) => { if (event.key === 'Enter') onOpen(item) }}>
-          <span className="history-file"><i><FileText size={19} /></i><span><strong>{item.fileName}</strong><small>{item.text.slice(0, 48)}{item.text.length > 48 ? '…' : ''}</small></span></span>
+          <span className="history-file"><i><FileText size={19} /></i><span><strong>{item.fileName}</strong><small>{item.preview.slice(0, 48)}{item.preview.length > 48 ? '…' : ''}</small></span></span>
           <span>{formatDuration(item.duration)}</span>
           <span><CalendarDays size={14} />{new Date(item.createdAt).toLocaleString('zh-CN')}</span>
           <span><button aria-label="删除" onClick={(event) => { event.stopPropagation(); onDelete(item) }}><Trash2 size={17} /></button></span>

@@ -1,7 +1,8 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult } from '../electron/types'
+import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
+import { summarizeTranscript } from '../electron/transcript-summary'
 import { AIChatPanel } from './components/AIChatPanel'
 import { MediaLibraryView } from './components/MediaLibraryView'
 import { QueuePanel } from './components/QueuePanel'
@@ -59,7 +60,7 @@ const demoFiles: QueueFile[] = [
   { id: 'demo-3', path: '', name: '客户访谈.mp3', size: 34_812_928, duration: 2178, status: 'done', progress: 100, result: { ...demoResult, id: 'demo-3', fileName: '客户访谈.mp3' } },
 ]
 
-const demoHistory = demoFiles.flatMap((file) => file.result ? [file.result] : [])
+const demoHistory = demoFiles.flatMap((file) => file.result ? [summarizeTranscript(file.result)] : [])
 
 const initialAISettings: AISettings = {
   providers: [
@@ -101,7 +102,7 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'asr' | 'ai' | 'personalize'>('asr')
   const [chatOpen, setChatOpen] = useState(isDemo && demoParameters.has('markdown'))
-  const [history, setHistory] = useState<TranscriptResult[]>(isDemo ? demoHistory : [])
+  const [history, setHistory] = useState<TranscriptSummary[]>(isDemo ? demoHistory : [])
   const [loadingSettings, setLoadingSettings] = useState(!isDemo)
   const [analysisBusy, setAnalysisBusy] = useState(false)
   const [analysisError, setAnalysisError] = useState(isDemo && demoParameters.has('analysis-error') ? 'AI 返回的 JSON 格式无效；已自动修复重试 1 次，请稍后重试。' : '')
@@ -214,7 +215,8 @@ export function App() {
             : '转写完成'
         setFiles((current) => current.map((item) => item.id === file.id ? { ...item, status, progress: 100, detail, result } : item))
         setSelectedResult(result)
-        setHistory((current) => [result, ...current.filter((item) => item.id !== result.id)])
+        const summary = summarizeTranscript(result)
+        setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
         window.tingxie.getMediaLibrary().then(setMediaLibrary).catch(() => undefined)
       } catch (error) {
         setFiles((current) => current.map((item) => item.id === file.id && item.status !== 'cancelled' ? { ...item, status: 'error', progress: 0, detail: error instanceof Error ? error.message : '转写失败' } : item))
@@ -317,11 +319,28 @@ export function App() {
   const updateResult = useCallback((result: TranscriptResult, persist = true) => {
     setSelectedResult(result)
     setFiles((current) => current.map((file) => file.id === result.id ? { ...file, result } : file))
-    setHistory((current) => [result, ...current.filter((item) => item.id !== result.id)])
+    const summary = summarizeTranscript(result)
+    setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
     if (persist && window.tingxie) {
       window.clearTimeout(historySaveTimer.current)
       historySaveTimer.current = window.setTimeout(() => window.tingxie?.updateHistory(result).catch(() => undefined), 450)
     }
+  }, [])
+
+  const patchTranscriptSegment = useCallback((transcriptId: string, segmentId: string, patch: Partial<TranscriptResult['segments'][number]>) => {
+    if (!window.tingxie) return
+    void window.tingxie.patchTranscriptSegment({ transcriptId, segmentId, patch }).then((summary) => {
+      setHistory((current) => [summary, ...current.filter((item) => item.id !== summary.id)])
+    }).catch(() => undefined)
+  }, [])
+
+  const openTranscript = useCallback(async (item: TranscriptSummary) => {
+    const result = window.tingxie
+      ? await window.tingxie.getTranscript(item.id)
+      : demoFiles.find((file) => file.result?.id === item.id)?.result
+    if (!result) return
+    setSelectedResult(result)
+    setCurrentPage('new')
   }, [])
 
   const generateAnalysis = useCallback(async () => {
@@ -350,7 +369,7 @@ export function App() {
 
   const openChat = useCallback(() => setChatOpen(true), [])
 
-  async function removeHistory(item: TranscriptResult) {
+  async function removeHistory(item: TranscriptSummary) {
     await window.tingxie?.deleteHistory(item.id)
     setHistory((current) => current.filter((value) => value.id !== item.id))
   }
@@ -369,7 +388,7 @@ export function App() {
         library={mediaLibrary}
         history={history}
         onLibraryChange={setMediaLibrary}
-        onOpenTranscript={(item) => { setSelectedResult(item); setCurrentPage('new') }}
+        onOpenTranscript={(item) => void openTranscript(item)}
         onTranscribe={transcribeLibraryAsset}
         onImportFiles={(folderId) => void importLibraryFiles(folderId)}
         onImportFolder={(folderId) => void importLibraryFolder(folderId)}
@@ -401,6 +420,7 @@ export function App() {
           preferences={settings.preferences}
           onChange={updateResult}
           onGenerateAnalysis={generateAnalysis}
+          onPatchSegment={patchTranscriptSegment}
           onExport={exportSelectedResult}
           onOpenChat={openChat}
           onNewTranscript={openNewTranscriptWorkspace}

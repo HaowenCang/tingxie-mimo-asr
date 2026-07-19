@@ -11,7 +11,8 @@ import { findTranscriptMatches, type TranscriptMatch } from './searchTranscript'
 interface TranscriptDetailProps {
   result: TranscriptResult
   preferences: AppPreferences
-  onChange(result: TranscriptResult): void
+  onChange(result: TranscriptResult, persist?: boolean): void
+  onPatchSegment?(transcriptId: string, segmentId: string, patch: Partial<TranscriptResult['segments'][number]>): void
   onGenerateAnalysis(): Promise<void>
   onExport(): void
   onOpenChat(): void
@@ -37,7 +38,7 @@ function MarkedExcerpt({ match }: { match: TranscriptMatch }) {
   return <>{match.excerpt.slice(0, start)}<mark>{match.excerpt.slice(start, start + match.length)}</mark>{match.excerpt.slice(start + match.length)}</>
 }
 
-export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
+export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onPatchSegment, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [activeMatch, setActiveMatch] = useState(0)
@@ -141,14 +142,17 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     jumpToSegment(searchMatches[normalized].segmentIndex)
   }
 
-  const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>) => {
+  const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>, persist = true) => {
     const segments = result.segments.map((segment, segmentIndex) => segmentIndex === index ? { ...segment, ...patch } : segment)
-    onChange({ ...result, segments, text: transcriptText(segments) })
+    onChange({ ...result, segments, text: transcriptText(segments) }, persist)
   }, [result, onChange])
 
   const commitSegmentText = useCallback((index: number, text: string) => {
-    updateSegment(index, { text })
-  }, [updateSegment])
+    const segment = result.segments[index]
+    if (!segment) return
+    updateSegment(index, { text }, !onPatchSegment)
+    onPatchSegment?.(result.id, segment.id || `segment-${index}`, { text })
+  }, [result.id, result.segments, onPatchSegment, updateSegment])
 
   return <main className="transcript-detail">
     <header className="detail-header glass-section">

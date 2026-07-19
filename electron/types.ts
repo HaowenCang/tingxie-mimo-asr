@@ -126,6 +126,20 @@ export interface TranscriptResult {
   analysis?: TranscriptAnalysis
 }
 
+export interface TranscriptSummary {
+  id: string
+  fileName: string
+  createdAt: string
+  duration: number
+  outcome?: 'complete' | 'partial' | 'failed'
+  failedSegmentCount?: number
+  segmentCount: number
+  mediaId?: string
+  sourceAvailable: boolean
+  preview: string
+  analysisStatus: 'none' | 'ready' | 'error'
+}
+
 export type AppTheme = 'system' | 'light' | 'dark'
 export type AccentColor = 'blue' | 'purple' | 'teal'
 export type ContentDensity = 'comfortable' | 'compact'
