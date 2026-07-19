@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportResult, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from './types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from './types'
 
 contextBridge.exposeInMainWorld('tingxie', {
   openFiles: (): Promise<SelectedMedia[]> => ipcRenderer.invoke('media:open'),
@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('tingxie', {
   getMediaLibrary: (): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:get'),
   importMedia: (sources: SelectedMedia[], folderId?: string): Promise<MediaImportResult> => ipcRenderer.invoke('library:import', { sources, folderId }),
   importMediaFolder: (folderId?: string): Promise<MediaImportResult | undefined> => ipcRenderer.invoke('library:import-folder', folderId),
+  onMediaImportProgress: (callback: (event: MediaImportProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: MediaImportProgress) => callback(progress)
+    ipcRenderer.on('library:import-progress', listener)
+    return () => ipcRenderer.removeListener('library:import-progress', listener)
+  },
   createMediaFolder: (name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:create-folder', name),
   renameMediaFolder: (id: string, name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:rename-folder', { id, name }),
   renameMediaAsset: (id: string, name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:rename-asset', { id, name }),

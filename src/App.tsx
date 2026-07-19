@@ -1,6 +1,6 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
+import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { summarizeTranscript } from '../electron/transcript-summary'
 import { AIChatPanel } from './components/AIChatPanel'
@@ -20,6 +20,7 @@ import { applyLatestProgressEvents } from './progress-batching'
 const demoParameters = new URLSearchParams(location.search)
 const isDemo = import.meta.env.DEV && demoParameters.has('demo')
 const isLongDemo = isDemo && demoParameters.has('long')
+const isLargeMediaDemo = isDemo && demoParameters.has('large-library')
 const demoLongText = '这是用于验证超长转写排版的演示文本，每一句都应连续排列，不应在下一个时间段之前留下大段空白。'.repeat(260)
 
 const demoSegments: TranscriptResult['segments'] = isLongDemo ? [
@@ -75,7 +76,15 @@ const initialAISettings: AISettings = {
 const demoLibrary: MediaLibrarySnapshot = {
   rootPath: 'D:\\听写媒体库',
   folders: [{ id: 'folder-meetings', name: '会议记录', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
-  assets: demoFiles.map((file, index) => ({
+  assets: (isLargeMediaDemo ? Array.from({ length: 10_000 }, (_, index): QueueFile => ({
+    id: `large-${index}`,
+    path: '',
+    name: `性能测试录音 ${String(index + 1).padStart(5, '0')}.m4a`,
+    size: 8_000_000 + index,
+    duration: 1800 + index % 900,
+    status: index % 3 === 0 ? 'done' : 'waiting',
+    progress: index % 3 === 0 ? 100 : 0,
+  })) : demoFiles).map((file, index) => ({
     id: `media-${index}`,
     displayName: file.name,
     originalName: file.name,
@@ -98,6 +107,7 @@ export function App() {
   const [selectedResult, setSelectedResult] = useState<TranscriptResult | undefined>(isDemo ? demoResult : undefined)
   const [settings, setSettings] = useState<AppSettings>({ hasApiKey: isDemo, language: 'auto', serviceMode: 'payg', configuredServices: isDemo ? ['payg'] : [], adaptiveConcurrency: true, preferences: DEFAULT_APP_PREFERENCES, mediaLibraryRoot: demoLibrary.rootPath })
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibrarySnapshot>(isDemo ? demoLibrary : { rootPath: '', folders: [], assets: [] })
+  const [mediaImportProgress, setMediaImportProgress] = useState<MediaImportProgress>()
   const [aiSettings, setAISettings] = useState<AISettings>(initialAISettings)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'asr' | 'ai' | 'personalize'>('asr')
@@ -113,6 +123,7 @@ export function App() {
   const queue = useRef<Promise<void>>(Promise.resolve())
   const historySaveTimer = useRef<number | undefined>(undefined)
   const progressFrameRef = useRef<number | undefined>(undefined)
+  const mediaImportClearTimer = useRef<number | undefined>(undefined)
   const pendingProgressEventsRef = useRef(new Map<string, ProgressEvent>())
   const autoAnalysisAttempted = useRef(new Set<string>())
 
@@ -193,8 +204,15 @@ export function App() {
       })
       .finally(() => setLoadingSettings(false))
     const unsubscribe = window.tingxie.onProgress(scheduleProgressUpdate)
+    const unsubscribeImport = window.tingxie.onMediaImportProgress((progress) => {
+      window.clearTimeout(mediaImportClearTimer.current)
+      setMediaImportProgress(progress)
+      if (progress.stage === 'complete') mediaImportClearTimer.current = window.setTimeout(() => setMediaImportProgress(undefined), 1800)
+    })
     return () => {
       unsubscribe()
+      unsubscribeImport()
+      window.clearTimeout(mediaImportClearTimer.current)
       if (progressFrameRef.current !== undefined) cancelAnimationFrame(progressFrameRef.current)
       pendingProgressEventsRef.current.clear()
     }
@@ -230,8 +248,11 @@ export function App() {
     if (!settings.hasApiKey) setShowSettings(true)
     const imported = await window.tingxie.importMedia(selected)
     setMediaLibrary(imported.library)
+    const assetsBySource = new Map(imported.library.assets.flatMap((asset) => asset.originalPath
+      ? [[`${asset.originalPath.replace(/\\/g, '/').toLocaleLowerCase()}\0${asset.size}`, asset] as const]
+      : []))
     const created = selected.map((file): QueueFile | undefined => {
-      const asset = imported.library.assets.find((item) => item.originalPath?.toLocaleLowerCase() === file.path.toLocaleLowerCase() && item.size === file.size)
+      const asset = assetsBySource.get(`${file.path.replace(/\\/g, '/').toLocaleLowerCase()}\0${file.size}`)
       if (!asset) return undefined
       const id = crypto.randomUUID()
       return { id, mediaId: asset.id, path: managedAssetPath(imported.library, asset), name: asset.displayName, size: asset.size, duration: asset.duration || 0, status: 'waiting', progress: 0 }
@@ -387,6 +408,7 @@ export function App() {
       {currentPage === 'library' ? <MediaLibraryView
         library={mediaLibrary}
         history={history}
+        importProgress={mediaImportProgress}
         onLibraryChange={setMediaLibrary}
         onOpenTranscript={(item) => void openTranscript(item)}
         onTranscribe={transcribeLibraryAsset}

@@ -31,4 +31,53 @@ describe('legacy transcript recovery', () => {
     expect(markup).toContain('2026年07月15日 19点01分.m4a')
     expect(markup).toContain('打开转写')
   })
+
+  it('virtualizes a 10,000 item media library instead of mounting every row', () => {
+    const library: MediaLibrarySnapshot = {
+      rootPath: 'D:\\library',
+      folders: [],
+      assets: Array.from({ length: 10_000 }, (_, index) => ({
+        id: `asset-${index}`,
+        displayName: `Recording ${index}.m4a`,
+        originalName: `Recording ${index}.m4a`,
+        relativePath: `media/asset-${index}.m4a`,
+        size: 1024,
+        extension: 'M4A',
+        transcriptStatus: 'untranscribed' as const,
+        managed: true,
+        importedAt: '2026-07-19T00:00:00.000Z',
+        updatedAt: '2026-07-19T00:00:00.000Z',
+      })),
+    }
+
+    const markup = renderToStaticMarkup(<MediaLibraryView
+      library={library}
+      history={[]}
+      onLibraryChange={() => undefined}
+      onOpenTranscript={() => undefined}
+      onTranscribe={() => undefined}
+      onImportFiles={() => undefined}
+      onImportFolder={() => undefined}
+    />)
+
+    expect(markup).toContain('data-virtualized="true"')
+    expect(markup).toContain('Recording 0.m4a')
+    expect(markup).not.toContain('Recording 9999.m4a')
+  })
+
+  it('shows staged import progress instead of leaving a large import looking stalled', () => {
+    const markup = renderToStaticMarkup(<MediaLibraryView
+      library={{ rootPath: 'D:\\library', folders: [], assets: [] }}
+      history={[]}
+      importProgress={{ stage: 'copying', completed: 25, total: 100, detail: '正在复制媒体 25/100' }}
+      onLibraryChange={() => undefined}
+      onOpenTranscript={() => undefined}
+      onTranscribe={() => undefined}
+      onImportFiles={() => undefined}
+      onImportFolder={() => undefined}
+    />)
+
+    expect(markup).toContain('正在复制媒体 25/100')
+    expect(markup).toContain('<progress')
+  })
 })
