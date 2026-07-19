@@ -1,6 +1,6 @@
 # 阶段 4：媒体库扩展性
 
-状态：本地实现与验收完成，等待 GitHub PR/Windows CI。
+状态：已完成；PR #8 的 GitHub Windows `test-and-build` 通过（1m34s）。
 
 分支：`codex/perf-media-library`
 
