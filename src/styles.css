@@ -753,7 +753,8 @@ html[data-reduced-motion='true'] *, html[data-reduced-motion='true'] *::before, 
 .original-section { max-width: 980px; margin: 22px auto 0; }
 .original-section > header { padding: 0 3px 11px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: var(--transcript-meta-font-size); }
 .original-section > header > div { display: flex; align-items: center; gap: 7px; color: var(--blue); }
-.timeline { display: grid; }
+.timeline { display: block; }
+.virtual-timeline-row { contain: layout paint style; }
 .inline-chapter-card { width: calc(100% - 92px); margin: 12px 0 10px 92px; padding: 12px 15px; border: 1px solid rgba(127,105,244,.13); border-radius: 15px; display: grid; gap: 4px; text-align: left; color: var(--text); background: linear-gradient(145deg, rgba(225,220,255,.61), rgba(239,238,255,.4)); box-shadow: inset 0 1px 0 rgba(255,255,255,.72); font-size: var(--smart-font-size); cursor: pointer; }
 .inline-chapter-card span { color: #725ee8; font-size: var(--smart-meta-font-size); font-weight: 650; }
 .inline-chapter-card strong { font-size: .9167em; }

@@ -10,6 +10,10 @@ interface AudioPlayerProps {
   onTimeChange(time: number): void
 }
 
+const WaveformBars = memo(function WaveformBars({ heights }: { heights: number[] }) {
+  return <span className="waveform-bars">{heights.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</span>
+})
+
 export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, seekTo, onTimeChange }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [mediaUrl, setMediaUrl] = useState('')
@@ -94,7 +98,7 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
       seek((event.clientX - rect.left) / rect.width * duration)
     }}>
       <span className="waveform-progress" style={{ width: `${duration ? currentTime / duration * 100 : 0}%` }} />
-      <span className="waveform-bars">{waveform.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</span>
+      <WaveformBars heights={waveform} />
     </button>
     <span className="player-time">{formatDuration(duration)}</span>
     <label className="player-rate"><span>倍速</span><select aria-label="播放速度" value={rate} onChange={(event) => setRate(Number(event.target.value))}>{[0.75, 1, 1.25, 1.5, 2].map((value) => <option key={value} value={value}>{value}x</option>)}</select></label>
