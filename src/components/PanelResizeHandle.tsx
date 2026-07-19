@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react'
+import { memo, useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react'
 
 export const DEFAULT_CHAT_PANEL_WIDTH = 410
 export const MIN_CHAT_PANEL_WIDTH = 340
@@ -33,7 +33,7 @@ interface PanelResizeHandleProps {
   onReset(): void
 }
 
-export function PanelResizeHandle({ width, shellWidth, onResize, onCommit, onReset }: PanelResizeHandleProps) {
+export const PanelResizeHandle = memo(function PanelResizeHandle({ width, shellWidth, onResize, onCommit, onReset }: PanelResizeHandleProps) {
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; latestWidth: number } | undefined>(undefined)
   const bounds = chatPanelWidthBounds(shellWidth)
 
@@ -98,4 +98,4 @@ export function PanelResizeHandle({ width, shellWidth, onResize, onCommit, onRes
     onPointerCancel={finishPointerDrag}
     onLostPointerCapture={finishPointerDrag}
   ><span /></div>
-}
+})

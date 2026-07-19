@@ -1,5 +1,5 @@
 import { AlertTriangle, Bot, Check, Copy, LoaderCircle, RefreshCw, Send, Settings2, Square, Trash2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { AIChatSession, AIMessage, AISettings, AIStreamEvent, TranscriptResult } from '../../electron/types'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -22,7 +22,7 @@ const PREVIEW_SESSION = (transcriptId: string): AIChatSession => isMarkdownPrevi
   ],
 } : EMPTY_SESSION(transcriptId)
 
-export function AIChatPanel({ transcript, settings, onSettingsChange, onOpenSettings, onClose }: AIChatPanelProps) {
+export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onSettingsChange, onOpenSettings, onClose }: AIChatPanelProps) {
   const [session, setSession] = useState<AIChatSession>(() => PREVIEW_SESSION(transcript.id))
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -229,4 +229,4 @@ export function AIChatPanel({ transcript, settings, onSettingsChange, onOpenSett
 
     {showTokenPlanWarning && <div className="ai-warning-backdrop"><section role="alertdialog" aria-modal="true" aria-labelledby="token-plan-warning-title"><AlertTriangle size={25} /><h3 id="token-plan-warning-title">确认 Token Plan 使用范围</h3><p>小米官方说明 Token Plan 仅限 Coding 场景，非 Coding 场景可能导致订阅暂停或 API Key 被封禁。请确认当前使用符合服务条款。</p><div><button className="secondary-button" onClick={() => { setShowTokenPlanWarning(false); setPending(null) }}>取消</button><button className="primary-button compact" onClick={confirmTokenPlan}>我已了解并继续</button></div></section></div>}
   </aside>
-}
+})

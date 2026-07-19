@@ -64,6 +64,7 @@ import {
   type AISettings,
   type AIStreamEvent,
   type Language,
+  type MediaAsset,
   type MediaInfo,
   type MediaImportResult,
   type MediaLibrarySnapshot,
@@ -179,6 +180,28 @@ function publicMediaLibrary(settings: StoredSettings, index: MediaLibraryIndex):
   return { rootPath: mediaLibraryRoot(settings), folders: index.folders, assets: index.assets }
 }
 
+// ponytail: semaphore-less concurrency cap — limits parallel ffprobe (child process) spawns during bulk import.
+// 6 concurrent probes keeps the system responsive; increase if importing hundreds of files and perf is an issue.
+async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let index = 0
+  async function worker(): Promise<void> {
+    while (index < items.length) {
+      const current = index++
+      results[current] = await fn(items[current])
+    }
+  }
+  return Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker())).then(() => results)
+}
+
+async function probeAllAssets(allAssets: MediaAsset[], newAssetIds: Set<string>, root: string): Promise<MediaAsset[]> {
+  return mapConcurrent(allAssets, 6, async (asset) => {
+    if (!newAssetIds.has(asset.id)) return asset
+    const duration = await probe(resolveManagedMediaPath(root, asset)).then((info) => publicMediaInfo(info).duration).catch(() => 0)
+    return { ...asset, duration }
+  })
+}
+
 const DIAGNOSTIC_LOG_BYTES = 5 * 1024 * 1024
 const DIAGNOSTIC_LOG_BACKUPS = 3
 let diagnosticLogQueue = Promise.resolve()
@@ -221,6 +244,36 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8')
 }
+
+// ponytail: in-memory cache for the three hot-path JSON stores — read once at startup, write-through on mutation.
+// If a migration step needs a forced re-read (unlikely), the cache can be cleared per-store.
+let cachedSettings: StoredSettings | undefined
+let cachedHistory: TranscriptResult[] | undefined
+let cachedChats: Record<string, AIChatSession> | undefined
+
+async function readCachedSettings(): Promise<StoredSettings> {
+  if (cachedSettings) return cachedSettings
+  cachedSettings = await readSettings()
+  return cachedSettings
+}
+
+function invalidateSettings(): void { cachedSettings = undefined }
+
+async function readCachedHistory(): Promise<TranscriptResult[]> {
+  if (cachedHistory) return cachedHistory
+  cachedHistory = await readCachedHistory()
+  return cachedHistory
+}
+
+function invalidateHistory(): void { cachedHistory = undefined }
+
+async function readCachedChats(): Promise<Record<string, AIChatSession>> {
+  if (cachedChats) return cachedChats
+  cachedChats = await readJson<Record<string, AIChatSession>>(chatsPath(), {})
+  return cachedChats
+}
+
+function invalidateChats(): void { cachedChats = undefined }
 
 async function readSettings(): Promise<StoredSettings> {
   const stored = await readJson<StoredSettings>(settingsPath(), { language: 'auto', serviceMode: 'payg' })
@@ -346,17 +399,20 @@ function emitAIStream(window: BrowserWindow, event: AIStreamEvent): void {
 }
 
 async function readChatSessions(): Promise<Record<string, AIChatSession>> {
-  return readJson<Record<string, AIChatSession>>(chatsPath(), {})
+  if (cachedChats) return cachedChats
+  cachedChats = await readJson<Record<string, AIChatSession>>(chatsPath(), {})
+  return cachedChats
 }
 
 async function writeChatSession(session: AIChatSession): Promise<void> {
   const sessions = await readChatSessions()
   sessions[session.transcriptId] = session
+  cachedChats = sessions
   await writeJson(chatsPath(), sessions)
 }
 
 async function getApiConfig(serviceModeOverride?: ServiceMode, apiKeyOverride?: string): Promise<ApiConfig> {
-  const settings = await readSettings()
+  const settings = await readCachedSettings()
   const serviceMode = serviceModeOverride || settings.serviceMode || 'payg'
   const adaptiveConcurrency = settings.adaptiveConcurrency !== false
   const paragraphLength = { ...DEFAULT_APP_PREFERENCES, ...settings.preferences }.paragraphLength
@@ -735,8 +791,9 @@ async function requestTranscript(
 }
 
 async function saveHistory(result: TranscriptResult): Promise<void> {
-  const items = await readJson<TranscriptResult[]>(historyPath(), [])
+  const items = await readCachedHistory()
   const next = [result, ...items.filter((item) => item.id !== result.id)]
+  cachedHistory = next
   await writeJson(historyPath(), next)
 }
 
@@ -810,7 +867,7 @@ async function repairStoredTranscript(recordId: string): Promise<StoredTranscrip
     }
   }
 
-  const settings = await readSettings()
+  const settings = await readCachedSettings()
   const apiConfig = await getApiConfig()
   const language = settings.language || 'auto'
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -1021,12 +1078,12 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('library:get', async (): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     return publicMediaLibrary(settings, await readMediaLibrary(settings))
   })
 
   ipcMain.handle('library:import', async (_event, input: { sources: SelectedMedia[]; folderId?: string }): Promise<MediaImportResult> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const root = mediaLibraryRoot(settings)
     const result = await importMediaAssets({
       index: await readMediaLibrary(settings),
@@ -1038,11 +1095,7 @@ app.whenReady().then(async () => {
     })
     const withMediaInfo: MediaLibraryIndex = {
       ...result.index,
-      assets: await Promise.all(result.index.assets.map(async (asset) => {
-        if (!result.imported.some((item) => item.id === asset.id)) return asset
-        const duration = await probe(resolveManagedMediaPath(root, asset)).then((info) => publicMediaInfo(info).duration).catch(() => 0)
-        return { ...asset, duration }
-      })),
+      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root),
     }
     await writeMediaLibrary(settings, withMediaInfo)
     return {
@@ -1056,23 +1109,19 @@ app.whenReady().then(async () => {
     const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: '导入媒体文件夹' })
     if (choice.canceled || !choice.filePaths[0]) return undefined
     const sources = await scanMediaDirectory(choice.filePaths[0])
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const root = mediaLibraryRoot(settings)
     const result = await importMediaAssets({ index: await readMediaLibrary(settings), libraryRoot: root, sources, folderId, createId: randomUUID, now: () => new Date().toISOString() })
     const next: MediaLibraryIndex = {
       ...result.index,
-      assets: await Promise.all(result.index.assets.map(async (asset) => {
-        if (!result.imported.some((item) => item.id === asset.id)) return asset
-        const duration = await probe(resolveManagedMediaPath(root, asset)).then((info) => publicMediaInfo(info).duration).catch(() => 0)
-        return { ...asset, duration }
-      })),
+      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root),
     }
     await writeMediaLibrary(settings, next)
     return { library: publicMediaLibrary(settings, next), importedIds: result.imported.map((asset) => asset.id), duplicateIds: result.duplicates.map((asset) => asset.id) }
   })
 
   ipcMain.handle('library:create-folder', async (_event, name: string): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const timestamp = new Date().toISOString()
     const next = createMediaFolder(await readMediaLibrary(settings), { id: randomUUID(), name, createdAt: timestamp, updatedAt: timestamp })
     await writeMediaLibrary(settings, next)
@@ -1080,28 +1129,28 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('library:rename-folder', async (_event, input: { id: string; name: string }): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const next = renameMediaFolder(await readMediaLibrary(settings), input.id, input.name, new Date().toISOString())
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
 
   ipcMain.handle('library:rename-asset', async (_event, input: { id: string; name: string }): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const next = renameMediaAsset(await readMediaLibrary(settings), input.id, input.name, new Date().toISOString())
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
 
   ipcMain.handle('library:move-assets', async (_event, input: { ids: string[]; folderId?: string }): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const next = moveMediaAssets(await readMediaLibrary(settings), input.ids, input.folderId, new Date().toISOString())
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
 
   ipcMain.handle('library:delete-assets', async (_event, ids: string[]): Promise<MediaLibrarySnapshot> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const index = await readMediaLibrary(settings)
     const deleting = index.assets.filter((asset) => ids.includes(asset.id))
     await Promise.all(deleting.map((asset) => fs.rm(resolveManagedMediaPath(mediaLibraryRoot(settings), asset), { force: true })))
@@ -1112,14 +1161,14 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('library:recover-history-media', async (_event, transcriptId: string): Promise<MediaLibrarySnapshot> => {
     await ensureHistoryBackup(historyPath(), historyRecoveryBackupPath())
-    const history = await readJson<TranscriptResult[]>(historyPath(), [])
+    const history = await readCachedHistory()
     const transcript = history.find((item) => item.id === transcriptId)
     if (!transcript) throw new Error('未找到该历史转写')
     if (!transcript.sourcePath) throw new Error('该记录没有保存原音频路径，可重新导入音频后手动核对')
     const sourceStat = await fs.stat(transcript.sourcePath).catch(() => undefined)
     if (!sourceStat?.isFile()) throw new Error('原音频已不在原位置，但转写文字仍可正常查看和导出')
 
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     let index = await readMediaLibrary(settings)
     const timestamp = new Date().toISOString()
     let recoveredFolder = index.folders.find((folder) => folder.name === '恢复的历史录音')
@@ -1149,14 +1198,15 @@ app.whenReady().then(async () => {
       assets: index.assets.map((item) => item.id === asset.id ? { ...item, duration: transcript.duration || item.duration } : item),
     }
     await writeMediaLibrary(settings, index)
-    await writeJson(historyPath(), attachManagedMediaToHistory(history, transcript.id, asset.id))
+    cachedHistory = attachManagedMediaToHistory(history, transcript.id, asset.id)
+    await writeJson(historyPath(), cachedHistory)
     return publicMediaLibrary(settings, index)
   })
 
   ipcMain.handle('library:choose-root', async (): Promise<MediaLibrarySnapshot | undefined> => {
     const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'], title: '选择媒体库存储位置' })
     if (choice.canceled || !choice.filePaths[0]) return undefined
-    const currentSettings = await readSettings()
+    const currentSettings = await readCachedSettings()
     const currentRoot = mediaLibraryRoot(currentSettings)
     const nextRoot = path.resolve(choice.filePaths[0])
     if (nextRoot !== currentRoot) {
@@ -1167,7 +1217,7 @@ app.whenReady().then(async () => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       })
       currentSettings.mediaLibraryRoot = nextRoot
-      await writeJson(settingsPath(), currentSettings)
+      await writeJson(settingsPath(), currentSettings); invalidateSettings()
     }
     return publicMediaLibrary(currentSettings, await readMediaLibrary(currentSettings))
   })
@@ -1304,7 +1354,7 @@ app.whenReady().then(async () => {
       }
       await saveHistory(result)
       if (input.mediaId) {
-        const storedSettings = await readSettings()
+        const storedSettings = await readCachedSettings()
         const linked = linkTranscriptToAsset(
           await readMediaLibrary(storedSettings),
           input.mediaId,
@@ -1355,7 +1405,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('settings:get', async () => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const serviceMode = settings.serviceMode || 'payg'
     const configuredServices = (Object.keys(settings.encryptedKeys || {}) as ServiceMode[])
       .filter((mode) => Boolean(settings.encryptedKeys?.[mode]))
@@ -1371,7 +1421,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('settings:save', async (_event, input: { apiKey?: string; language: Language; serviceMode?: ServiceMode; adaptiveConcurrency?: boolean }) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     const serviceMode = input.serviceMode || current.serviceMode || 'payg'
     current.encryptedKeys ||= {}
     if (input.apiKey) {
@@ -1382,7 +1432,7 @@ app.whenReady().then(async () => {
     current.serviceMode = serviceMode
     current.adaptiveConcurrency = input.adaptiveConcurrency ?? current.adaptiveConcurrency ?? true
     delete current.encryptedKey
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     const configuredServices = (Object.keys(current.encryptedKeys) as ServiceMode[])
       .filter((mode) => Boolean(current.encryptedKeys?.[mode]))
     return {
@@ -1397,7 +1447,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('preferences:save', async (_event, input: Partial<AppPreferences>) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     const preferences: AppPreferences = { ...DEFAULT_APP_PREFERENCES, ...current.preferences, ...input }
     preferences.uiScale = Math.min(125, Math.max(85, Number(preferences.uiScale) || 100))
     preferences.uiFontScale = Math.min(125, Math.max(85, Number(preferences.uiFontScale) || 100))
@@ -1415,7 +1465,7 @@ app.whenReady().then(async () => {
     preferences.seekSeconds = [5, 10, 15].includes(Number(preferences.seekSeconds)) ? Number(preferences.seekSeconds) : 5
     preferences.seekLeadSeconds = Math.min(2, Math.max(0, Number(preferences.seekLeadSeconds) || 0))
     current.preferences = preferences
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     return preferences
   })
 
@@ -1426,10 +1476,10 @@ app.whenReady().then(async () => {
     return true
   })
 
-  ipcMain.handle('ai:settings:get', async () => publicAISettings(await readSettings()))
+  ipcMain.handle('ai:settings:get', async () => publicAISettings(await readCachedSettings()))
 
   ipcMain.handle('ai:provider:save', async (_event, input: { provider: AIProvider; apiKey?: string }) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     const providers = storedAIProviders(current)
     const validated = validateAIProvider(input.provider)
     if (validated.kind === 'mimo-payg' || validated.kind === 'mimo-token-plan') validated.id = validated.kind
@@ -1451,12 +1501,12 @@ app.whenReady().then(async () => {
       providers: nextProviders,
       selectedProviderId: validated.id,
     }
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     return publicAISettings(current)
   })
 
   ipcMain.handle('ai:provider:delete', async (_event, id: string) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     const provider = storedAIProviders(current).find((item) => item.id === id)
     if (!provider) return publicAISettings(current)
     if (provider.kind !== 'openai-compatible') throw new Error('小米内置 Provider 不能删除')
@@ -1465,20 +1515,20 @@ app.whenReady().then(async () => {
       providers: storedAIProviders(current).filter((item) => item.id !== id),
       selectedProviderId: current.ai?.selectedProviderId === id ? 'mimo-payg' : current.ai?.selectedProviderId,
     }
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     return publicAISettings(current)
   })
 
   ipcMain.handle('ai:provider:select', async (_event, id: string) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     if (!storedAIProviders(current).some((provider) => provider.id === id)) throw new Error('AI Provider 不存在')
     current.ai = { ...current.ai, selectedProviderId: id }
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     return publicAISettings(current)
   })
 
   ipcMain.handle('ai:provider:test', async (_event, input: { provider: AIProvider; apiKey?: string }) => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     const validated = validateAIProvider(input.provider)
     const saved = storedAIProviders(current).find((provider) => provider.id === validated.id)
     validated.encryptedApiKey = saved?.encryptedApiKey
@@ -1489,9 +1539,9 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('ai:token-plan:acknowledge', async () => {
-    const current = await readSettings()
+    const current = await readCachedSettings()
     current.ai = { ...current.ai, tokenPlanAcknowledged: true }
-    await writeJson(settingsPath(), current)
+    await writeJson(settingsPath(), current); invalidateSettings()
     return publicAISettings(current)
   })
 
@@ -1504,6 +1554,7 @@ app.whenReady().then(async () => {
     const sessions = await readChatSessions()
     const session: AIChatSession = { transcriptId, messages: [], updatedAt: new Date().toISOString() }
     sessions[transcriptId] = session
+    cachedChats = sessions
     await writeJson(chatsPath(), sessions)
     return session
   })
@@ -1523,7 +1574,7 @@ app.whenReady().then(async () => {
     const requestController = new AbortController()
     activeAIRequests.set(input.requestId, requestController)
     try {
-      const settings = await readSettings()
+      const settings = await readCachedSettings()
       const providerId = input.providerId || publicAISettings(settings).selectedProviderId
       const provider = storedAIProviders(settings).find((item) => item.id === providerId)
       if (!provider) throw new Error('AI Provider 不存在')
@@ -1610,7 +1661,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('ai:analysis:generate', async (_event, input: { transcript: TranscriptResult; providerId?: string }): Promise<TranscriptResult> => {
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const providerId = input.providerId || publicAISettings(settings).selectedProviderId
     const provider = storedAIProviders(settings).find((item) => item.id === providerId)
     if (!provider) throw new Error('AI Provider 不存在')
@@ -1647,16 +1698,16 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('history:get', async () => {
     await ensureHistoryBackup(historyPath(), historyRecoveryBackupPath())
-    return readJson<TranscriptResult[]>(historyPath(), [])
+    return readCachedHistory()
   })
   ipcMain.handle('history:update', async (_event, result: TranscriptResult) => {
     await saveHistory(result)
     return result
   })
   ipcMain.handle('media:get-url', async (_event, transcriptId: string) => {
-    const items = await readJson<TranscriptResult[]>(historyPath(), [])
+    const items = await readCachedHistory()
     const transcript = items.find((item) => item.id === transcriptId)
-    const settings = await readSettings()
+    const settings = await readCachedSettings()
     const library = await readMediaLibrary(settings)
     const managedAsset = transcript?.mediaId ? library.assets.find((asset) => asset.id === transcript.mediaId) : undefined
     const sourcePath = managedAsset ? resolveManagedMediaPath(mediaLibraryRoot(settings), managedAsset) : transcript?.sourcePath
@@ -1665,10 +1716,12 @@ app.whenReady().then(async () => {
     return encodeURI(`file:///${normalized}`)
   })
   ipcMain.handle('history:delete', async (_event, id: string) => {
-    const items = await readJson<TranscriptResult[]>(historyPath(), [])
-    await writeJson(historyPath(), items.filter((item) => item.id !== id))
+    const items = await readCachedHistory()
+    cachedHistory = items.filter((item) => item.id !== id)
+    await writeJson(historyPath(), cachedHistory)
     const sessions = await readChatSessions()
     delete sessions[id]
+    cachedChats = sessions
     await writeJson(chatsPath(), sessions)
     return true
   })

@@ -1,4 +1,5 @@
 import { CalendarDays, FileText, Search, Trash2 } from 'lucide-react'
+import { memo } from 'react'
 import type { TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 
@@ -8,7 +9,7 @@ interface HistoryViewProps {
   onDelete(item: TranscriptResult): void
 }
 
-export function HistoryView({ items, onOpen, onDelete }: HistoryViewProps) {
+export const HistoryView = memo(function HistoryView({ items, onOpen, onDelete }: HistoryViewProps) {
   return (
     <main className="history-view">
       <header className="page-header"><div><h1>历史记录</h1><p>最近完成的转写保存在这台电脑上</p></div><label className="history-search"><Search size={17} /><input placeholder="搜索文件名" /></label></header>
@@ -23,4 +24,4 @@ export function HistoryView({ items, onOpen, onDelete }: HistoryViewProps) {
       </div> : <div className="history-empty"><FileText size={32} /><h2>还没有转写记录</h2><p>完成的转写会自动出现在这里。</p></div>}
     </main>
   )
-}
+})

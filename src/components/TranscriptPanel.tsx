@@ -1,5 +1,5 @@
 import { AlertTriangle, Bot, Check, ChevronDown, Copy, Download, PanelLeftOpen, Search, TextCursorInput } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Language, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 
@@ -15,8 +15,9 @@ interface TranscriptPanelProps {
 }
 
 function resizeTextarea(textarea: HTMLTextAreaElement): void {
+  const scrollHeight = textarea.scrollHeight
   textarea.style.height = '0px'
-  textarea.style.height = `${textarea.scrollHeight}px`
+  if (scrollHeight > 0) textarea.style.height = `${scrollHeight}px`
 }
 
 function AutoResizeTextarea({ value, onValueChange }: { value: string; onValueChange(value: string): void }) {
@@ -64,7 +65,7 @@ function transcriptText(segments: TranscriptResult['segments']): string {
     : segment.text).join('\n\n')
 }
 
-export function TranscriptPanel({ result, language, onLanguage, onChange, onExport, chatOpen, onOpenChat, onRestoreWorkspace }: TranscriptPanelProps) {
+export const TranscriptPanel = memo(function TranscriptPanel({ result, language, onLanguage, onChange, onExport, chatOpen, onOpenChat, onRestoreWorkspace }: TranscriptPanelProps) {
   const [query, setQuery] = useState('')
   const [copied, setCopied] = useState(false)
   const wordCount = useMemo(() => result?.segments
@@ -154,4 +155,4 @@ export function TranscriptPanel({ result, language, onLanguage, onChange, onExpo
       </div>
     </aside>
   )
-}
+})

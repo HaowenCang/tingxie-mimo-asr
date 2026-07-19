@@ -1,12 +1,12 @@
 import { FolderOpen, Upload } from 'lucide-react'
-import { useState, type DragEvent } from 'react'
+import { memo, useState, type DragEvent } from 'react'
 
 interface UploadZoneProps {
   onSelect(): void
   onDrop(files: File[]): void
 }
 
-export function UploadZone({ onSelect, onDrop }: UploadZoneProps) {
+export const UploadZone = memo(function UploadZone({ onSelect, onDrop }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false)
 
   function handleDrop(event: DragEvent) {
@@ -33,4 +33,4 @@ export function UploadZone({ onSelect, onDrop }: UploadZoneProps) {
       <button className="primary-button" onClick={onSelect}><FolderOpen size={18} />选择文件</button>
     </div>
   )
-}
+})

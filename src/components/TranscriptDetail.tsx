@@ -1,5 +1,5 @@
 import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Download, FileText, LoaderCircle, Search, Sparkles, WandSparkles, X } from 'lucide-react'
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 import { AudioPlayer } from './AudioPlayer'
@@ -34,7 +34,7 @@ function MarkedExcerpt({ match }: { match: TranscriptMatch }) {
   return <>{match.excerpt.slice(0, start)}<mark>{match.excerpt.slice(start, start + match.length)}</mark>{match.excerpt.slice(start + match.length)}</>
 }
 
-export function TranscriptDetail({ result, preferences, onChange, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
+export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [activeMatch, setActiveMatch] = useState(0)
@@ -153,4 +153,4 @@ export function TranscriptDetail({ result, preferences, onChange, onGenerateAnal
     </div>
     <AudioPlayer transcript={result} preferences={preferences} seekTo={seekTo} onTimeChange={setCurrentTime} />
   </main>
-}
+})
