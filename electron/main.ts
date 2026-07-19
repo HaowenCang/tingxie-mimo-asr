@@ -28,6 +28,13 @@ import {
 } from './adaptive-concurrency'
 import { isPermanentQuotaError, runChunkWithRetry, type RetryFailure } from './transcription-retry'
 import {
+  AsyncByteBudget,
+  calculateAsrMemoryBudget,
+  estimateAsrRequestMemory,
+  withAsrRequestAdmission,
+} from './asr-request-memory'
+import { DiagnosticLogWriter } from './diagnostic-log'
+import {
   inspectTranscriptQuality,
   recoverTranscriptChunk,
   type RecoverableAudioChunk,
@@ -203,34 +210,24 @@ async function probeAllAssets(allAssets: MediaAsset[], newAssetIds: Set<string>,
   })
 }
 
-const DIAGNOSTIC_LOG_BYTES = 5 * 1024 * 1024
-const DIAGNOSTIC_LOG_BACKUPS = 3
-let diagnosticLogQueue = Promise.resolve()
+let diagnosticLogWriter: DiagnosticLogWriter | undefined
+const asrRequestMemoryBudget = new AsyncByteBudget(calculateAsrMemoryBudget(os.freemem()))
 
 function diagnosticLogPath(): string {
   return path.join(app.getPath('userData'), 'logs', 'main.log')
 }
 
-async function appendDiagnosticLog(event: string, details: Record<string, unknown>): Promise<void> {
-  const file = diagnosticLogPath()
-  await fs.mkdir(path.dirname(file), { recursive: true })
-  const size = await fs.stat(file).then((stat) => stat.size).catch(() => 0)
-  if (size >= DIAGNOSTIC_LOG_BYTES) {
-    await fs.rm(`${file}.${DIAGNOSTIC_LOG_BACKUPS}`, { force: true }).catch(() => undefined)
-    for (let index = DIAGNOSTIC_LOG_BACKUPS - 1; index >= 1; index -= 1) {
-      await fs.rename(`${file}.${index}`, `${file}.${index + 1}`).catch(() => undefined)
-    }
-    await fs.rename(file, `${file}.1`).catch(() => undefined)
-  }
-  const line = JSON.stringify({ timestamp: new Date().toISOString(), event, ...details })
-  await fs.appendFile(file, `${line}\n`, 'utf8')
+function getDiagnosticLogWriter(): DiagnosticLogWriter {
+  diagnosticLogWriter ??= new DiagnosticLogWriter(diagnosticLogPath())
+  return diagnosticLogWriter
 }
 
 function logDiagnostic(event: string, details: Record<string, unknown>): void {
-  diagnosticLogQueue = diagnosticLogQueue
-    .catch(() => undefined)
-    .then(() => appendDiagnosticLog(event, details))
-    .catch(() => undefined)
+  getDiagnosticLogWriter().write(event, details)
+}
+
+async function flushDiagnosticLogs(): Promise<void> {
+  await diagnosticLogWriter?.flush().catch(() => undefined)
 }
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
@@ -644,36 +641,56 @@ async function requestTranscript(
 ) {
   const ext = path.extname(file).toLowerCase()
   const mime = ext === '.mp3' ? 'audio/mpeg' : 'audio/wav'
-  const data = (await fs.readFile(file)).toString('base64')
-  if (Buffer.byteLength(data, 'utf8') + 32 >= 10 * 1024 * 1024) {
+  const fileBytes = (await fs.stat(file)).size
+  const base64Bytes = 4 * Math.ceil(fileBytes / 3)
+  if (base64Bytes + 32 >= 10 * 1024 * 1024) {
     const failure: RetryFailure = { disposition: 'content', fingerprint: 'audio-too-large', message: '音频 Base64 编码后超过 10MB 接口限制', retryable: false }
     return { status: 'failed', error: failure.message, attempts: 1, errorAttempts: 1, rateLimitWaits: 0, failure } as const
   }
 
   let lastRateWaitMs = 0
+  let lastMemoryWaitMs = 0
   let lastRequestDurationMs = 0
+  const memoryReservationBytes = estimateAsrRequestMemory(fileBytes)
   const outcome = await runChunkWithRetry({
     attempt: async (attemptNumber) => {
-      const rateWaitStartedAt = Date.now()
-      do {
-        await abortableDelay(rateLimiter.reserve(), signal)
-      } while (rateLimiter.isBlocked())
-      lastRateWaitMs = Date.now() - rateWaitStartedAt
-      const requestStartedAt = Date.now()
       let response: Response
       try {
-        response = await fetch(serviceEndpoint(apiConfig.serviceMode, 'chat/completions'), {
-          method: 'POST',
-          headers: { 'api-key': apiConfig.apiKey, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model: 'mimo-v2.5-asr',
-            messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${mime};base64,${data}` } }] }],
-            asr_options: { language },
-          }),
+        response = await withAsrRequestAdmission({
+          waitForRate: async () => {
+            const rateWaitStartedAt = Date.now()
+            do {
+              await abortableDelay(rateLimiter.reserve(), signal)
+            } while (rateLimiter.isBlocked())
+            lastRateWaitMs = Date.now() - rateWaitStartedAt
+          },
+          budget: asrRequestMemoryBudget,
+          estimatedBytes: memoryReservationBytes,
           signal,
+          onMemoryWait: (milliseconds) => { lastMemoryWaitMs = milliseconds },
+          prepare: async () => {
+            const data = (await fs.readFile(file)).toString('base64')
+            return JSON.stringify({
+              model: 'mimo-v2.5-asr',
+              messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${mime};base64,${data}` } }] }],
+              asr_options: { language },
+            })
+          },
+          execute: async (body) => {
+            const requestStartedAt = Date.now()
+            try {
+              return await fetch(serviceEndpoint(apiConfig.serviceMode, 'chat/completions'), {
+                method: 'POST',
+                headers: { 'api-key': apiConfig.apiKey, 'content-type': 'application/json' },
+                body,
+                signal,
+              })
+            } finally {
+              lastRequestDurationMs = Date.now() - requestStartedAt
+            }
+          },
         })
       } catch (error) {
-        lastRequestDurationMs = Date.now() - requestStartedAt
         if (signal.aborted) throw new TranscriptRequestError({ disposition: 'global', fingerprint: 'cancelled', message: '任务已取消' })
         const message = error instanceof Error ? error.message : '网络请求失败'
         throw new TranscriptRequestError({
@@ -682,8 +699,6 @@ async function requestTranscript(
           message,
         })
       }
-      lastRequestDurationMs = Date.now() - requestStartedAt
-
       const body = await response.json().catch(() => ({})) as Record<string, unknown>
       if (response.ok) {
         const text = extractText(body)
@@ -719,6 +734,9 @@ async function requestTranscript(
           ...context,
           attempt: attemptNumber,
           rateWaitMs: lastRateWaitMs,
+          memoryWaitMs: lastMemoryWaitMs,
+          memoryReservationBytes,
+          memoryBudgetBytes: asrRequestMemoryBudget.capacityBytes,
           requestDurationMs: lastRequestDurationMs,
           rpmBefore,
           rpmAfter: rateLimiter.currentRpm,
@@ -774,6 +792,9 @@ async function requestTranscript(
         fingerprint: failure.fingerprint,
         retryDelayMs: delayMs,
         rateWaitMs: lastRateWaitMs,
+        memoryWaitMs: lastMemoryWaitMs,
+        memoryReservationBytes,
+        memoryBudgetBytes: asrRequestMemoryBudget.capacityBytes,
         requestDurationMs: lastRequestDurationMs,
         rpmBefore,
         rpmAfter: rateLimiter.currentRpm,
@@ -1066,7 +1087,7 @@ app.whenReady().then(async () => {
       process.exitCode = 1
       process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`)
     }
-    await diagnosticLogQueue.catch(() => undefined)
+    await flushDiagnosticLogs()
     app.quit()
     return
   }
@@ -1745,6 +1766,14 @@ app.whenReady().then(async () => {
     clipboard.writeText(text)
     return true
   })
+})
+
+let quittingAfterDiagnosticFlush = false
+app.on('before-quit', (event) => {
+  if (quittingAfterDiagnosticFlush || !diagnosticLogWriter) return
+  event.preventDefault()
+  quittingAfterDiagnosticFlush = true
+  void flushDiagnosticLogs().finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {
