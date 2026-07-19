@@ -41,6 +41,7 @@ import {
   normalizeBaseUrl,
   readCompletionResponse,
 } from './ai-chat'
+import { resolveProviderSystemPrompt } from './ai-provider-defaults'
 import { generateTranscriptAnalysis } from './analysis'
 import { attachManagedMediaToHistory, ensureHistoryBackup } from './history-recovery'
 import {
@@ -261,7 +262,7 @@ function invalidateSettings(): void { cachedSettings = undefined }
 
 async function readCachedHistory(): Promise<TranscriptResult[]> {
   if (cachedHistory) return cachedHistory
-  cachedHistory = await readCachedHistory()
+  cachedHistory = await readJson<TranscriptResult[]>(historyPath(), [])
   return cachedHistory
 }
 
@@ -304,7 +305,10 @@ function builtInProvider(kind: 'mimo-payg' | 'mimo-token-plan'): StoredAIProvide
 }
 
 function storedAIProviders(settings: StoredSettings): StoredAIProvider[] {
-  const saved = settings.ai?.providers || []
+  const saved = (settings.ai?.providers || []).map((provider) => ({
+    ...provider,
+    systemPrompt: resolveProviderSystemPrompt(provider.systemPrompt, DEFAULT_AI_SYSTEM_PROMPT),
+  }))
   const payg = saved.find((provider) => provider.id === 'mimo-payg') || builtInProvider('mimo-payg')
   const tokenPlan = saved.find((provider) => provider.id === 'mimo-token-plan') || builtInProvider('mimo-token-plan')
   const custom = saved.filter((provider) => provider.kind === 'openai-compatible' && provider.id !== 'mimo-payg' && provider.id !== 'mimo-token-plan')

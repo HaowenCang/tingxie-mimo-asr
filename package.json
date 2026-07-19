@@ -1,6 +1,6 @@
 {
   "name": "tingxie-mimo-asr",
-  "version": "0.11.3",
+  "version": "0.11.5",
   "description": "A Windows desktop transcription client for Xiaomi MiMo ASR",
   "main": "dist-electron/main.cjs",
   "type": "module",

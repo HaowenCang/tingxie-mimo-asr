@@ -138,7 +138,7 @@ export const AIProviderSettings = memo(function AIProviderSettings({ settings, o
       <label className="provider-field"><span>上下文长度</span><input type="number" min="1024" step="1024" value={draft.contextWindow} onChange={(event) => setDraft((current) => ({ ...current, contextWindow: Number(event.target.value) }))} /></label>
       <label className="provider-field"><span>最大输出 Token</span><input type="number" min="1" step="256" value={draft.maxOutputTokens} onChange={(event) => setDraft((current) => ({ ...current, maxOutputTokens: Number(event.target.value) }))} /></label>
       <label className="provider-field wide"><span>API Key <small>{canUseStoredKey ? '已配置' : '未配置'}</small></span><div className="provider-key-input"><KeyRound size={16} /><input type={showKey ? 'text' : 'password'} value={apiKey} placeholder={canUseStoredKey ? '留空以继续使用已保存的 Key' : '请输入 API Key'} onChange={(event) => setApiKey(event.target.value)} /><button aria-label={showKey ? '隐藏 AI API Key' : '显示 AI API Key'} onClick={() => setShowKey((value) => !value)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
-      <label className="provider-field wide"><span>系统提示词</span><textarea rows={12} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))} /></label>
+      <label className="provider-field wide"><span>系统提示词</span><textarea className="provider-system-prompt" aria-label="系统提示词" rows={12} value={draft.systemPrompt} onChange={(event) => setDraft((current) => ({ ...current, systemPrompt: event.target.value }))} /></label>
     </div>
 
     <div className="provider-form-footer">
