@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 阶段 0：GitHub 安全基线和性能反馈环 | 🟢 已完成 | PR #1、#3 已合并；PR #4 | checkpoint、合成基准和 Windows CI 已建立；86/86 测试、本机生产构建及 GitHub `test-and-build`（1m18s）通过；主分支保护在 PR #4 合并后启用 |
 | 阶段 1：超长转写渲染与编辑 | 🟢 已完成 | PR #5 · `codex/perf-transcript-rendering` | 1,200 段 SSR 平均耗时 123.30ms → 15.53ms（-87.4%）；90/90 测试、构建、生产依赖审计、真实界面验收及 GitHub Windows `test-and-build`（1m27s）通过 |
-| 阶段 2：ASR 内存与主进程吞吐 | ⚪ 未开始 | — | — |
+| 阶段 2：ASR 内存与主进程吞吐 | 🟢 已完成 | PR #6 · `codex/perf-asr-memory` | RPM 后编码、128–192MiB 字节闸门、取消安全和批量日志已完成；96/96 测试、构建、生产依赖审计及 GitHub Windows `test-and-build`（1m20s）通过 |
 | 阶段 3：历史存储与启动加载 | ⚪ 未开始 | — | — |
 | 阶段 4：媒体库扩展性 | ⚪ 未开始 | — | — |
 | 阶段 5：AI、搜索、启动包与 Liquid Glass | ⚪ 未开始 | — | — |
