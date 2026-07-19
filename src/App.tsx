@@ -108,7 +108,20 @@ export function App() {
   const preferredChatPanelWidth = useRef(DEFAULT_CHAT_PANEL_WIDTH)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const historySaveTimer = useRef<number | undefined>(undefined)
+  const progressFrameRef = useRef(0)
   const autoAnalysisAttempted = useRef(new Set<string>())
+
+  function scheduleProgressUpdate(event: ProgressEvent) {
+    cancelAnimationFrame(progressFrameRef.current)
+    progressFrameRef.current = requestAnimationFrame(() => {
+      setFiles((current) => current.map((file) => file.id === event.id ? {
+        ...file,
+        status: event.stage === 'cancelled' ? 'cancelled' : event.stage,
+        progress: event.progress,
+        detail: event.detail,
+      } : file))
+    })
+  }
 
   useEffect(() => {
     const root = document.documentElement
@@ -158,6 +171,10 @@ export function App() {
   useEffect(() => {
     if (!selectedResult || selectedResult.analysis || !settings.preferences.autoGenerateAnalysis || autoAnalysisAttempted.current.has(selectedResult.id)) return
     autoAnalysisAttempted.current.add(selectedResult.id)
+    if (autoAnalysisAttempted.current.size > 200) {
+      const entries = [...autoAnalysisAttempted.current]
+      autoAnalysisAttempted.current = new Set(entries.slice(-100))
+    }
     void generateAnalysis()
   }, [selectedResult?.id, selectedResult?.analysis, settings.preferences.autoGenerateAnalysis])
 
@@ -166,16 +183,11 @@ export function App() {
     Promise.all([window.tingxie.getSettings(), window.tingxie.getHistory(), window.tingxie.getAISettings(), window.tingxie.getMediaLibrary()])
       .then(([nextSettings, nextHistory, nextAISettings, nextLibrary]) => { setSettings(nextSettings); setHistory(nextHistory); setAISettings(nextAISettings); setMediaLibrary(nextLibrary) })
       .finally(() => setLoadingSettings(false))
-    return window.tingxie.onProgress((event) => updateFromProgress(event))
+    return window.tingxie.onProgress((event) => scheduleProgressUpdate(event))
   }, [])
 
   const updateFromProgress = useCallback((event: ProgressEvent) => {
-    setFiles((current) => current.map((file) => file.id === event.id ? {
-      ...file,
-      status: event.stage === 'cancelled' ? 'cancelled' : event.stage,
-      progress: event.progress,
-      detail: event.detail,
-    } : file))
+    scheduleProgressUpdate(event)
   }, [])
 
   function enqueue(file: QueueFile) {

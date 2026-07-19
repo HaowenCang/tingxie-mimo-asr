@@ -1,5 +1,5 @@
 import { Eye, EyeOff, KeyRound, LoaderCircle, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { AIProvider, AISettings } from '../../electron/types'
 
 interface AIProviderSettingsProps {
@@ -20,7 +20,7 @@ function selectedProvider(settings: AISettings): AIProvider {
   return settings.providers.find((provider) => provider.id === settings.selectedProviderId) || settings.providers[0]
 }
 
-export function AIProviderSettings({ settings, onChange, onSave, onDelete, onSelect, onTest }: AIProviderSettingsProps) {
+export const AIProviderSettings = memo(function AIProviderSettings({ settings, onChange, onSave, onDelete, onSelect, onTest }: AIProviderSettingsProps) {
   const [draft, setDraft] = useState<AIProvider>(() => selectedProvider(settings))
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
@@ -150,4 +150,4 @@ export function AIProviderSettings({ settings, onChange, onSave, onDelete, onSel
     </div>
     {message && <div className="provider-message">{message}</div>}
   </div>
-}
+})

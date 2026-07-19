@@ -1,5 +1,5 @@
 import { Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 
@@ -10,7 +10,7 @@ interface AudioPlayerProps {
   onTimeChange(time: number): void
 }
 
-export function AudioPlayer({ transcript, preferences, seekTo, onTimeChange }: AudioPlayerProps) {
+export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, seekTo, onTimeChange }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [mediaUrl, setMediaUrl] = useState('')
   const [playing, setPlaying] = useState(false)
@@ -102,4 +102,4 @@ export function AudioPlayer({ transcript, preferences, seekTo, onTimeChange }: A
     <input className="volume-slider" aria-label="音量" type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
     <span className={`skip-badge ${preferences.skipSilence ? 'active' : ''}`}>跳过静音 {preferences.skipSilence ? '开' : '关'}</span>
   </footer>
-}
+})

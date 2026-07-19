@@ -1,5 +1,5 @@
 import { CheckCircle2, ExternalLink, Eye, EyeOff, FolderCog, KeyRound, LoaderCircle, ShieldCheck, X } from 'lucide-react'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { AIProvider, AISettings, AppPreferences, Language, ServiceMode } from '../../electron/types'
 import { AIProviderSettings } from './AIProviderSettings'
 
@@ -24,7 +24,7 @@ interface SettingsModalProps {
   onTestAIProvider(input: { provider: AIProvider; apiKey?: string }): Promise<void>
 }
 
-export function SettingsModal({ configuredServices, language: initialLanguage, serviceMode: initialServiceMode, adaptiveConcurrency: initialAdaptiveConcurrency, aiSettings, preferences: initialPreferences, mediaLibraryRoot, initialSection = 'asr', onClose, onSave, onSavePreferences, onChooseMediaLibraryRoot, onTest, onAISettingsChange, onSaveAIProvider, onDeleteAIProvider, onSelectAIProvider, onTestAIProvider }: SettingsModalProps) {
+export const SettingsModal = memo(function SettingsModal({ configuredServices, language: initialLanguage, serviceMode: initialServiceMode, adaptiveConcurrency: initialAdaptiveConcurrency, aiSettings, preferences: initialPreferences, mediaLibraryRoot, initialSection = 'asr', onClose, onSave, onSavePreferences, onChooseMediaLibraryRoot, onTest, onAISettingsChange, onSaveAIProvider, onDeleteAIProvider, onSelectAIProvider, onTestAIProvider }: SettingsModalProps) {
   const [section, setSection] = useState<'asr' | 'ai' | 'personalize'>(initialSection)
   const [apiKey, setApiKey] = useState('')
   const [language, setLanguage] = useState(initialLanguage)
@@ -145,4 +145,4 @@ export function SettingsModal({ configuredServices, language: initialLanguage, s
       </>}
     </section>
   </div>
-}
+})

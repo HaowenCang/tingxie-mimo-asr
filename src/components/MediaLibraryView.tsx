@@ -1,5 +1,5 @@
 import { CheckSquare, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderPlus, Library, Search, Square, Trash2, Upload, X } from 'lucide-react'
-import { useDeferredValue, useMemo, useState } from 'react'
+import { memo, useDeferredValue, useMemo, useState } from 'react'
 import type { MediaAsset, MediaLibrarySnapshot, TranscriptResult } from '../../electron/types'
 import { formatBytes, formatDuration } from '../utils'
 
@@ -23,7 +23,7 @@ function statusLabel(asset: MediaAsset): string {
   return '未转写'
 }
 
-export function MediaLibraryView({ library, history, onLibraryChange, onOpenTranscript, onTranscribe, onImportFiles, onImportFolder, onRecoverHistoryMedia }: MediaLibraryViewProps) {
+export const MediaLibraryView = memo(function MediaLibraryView({ library, history, onLibraryChange, onOpenTranscript, onTranscribe, onImportFiles, onImportFolder, onRecoverHistoryMedia }: MediaLibraryViewProps) {
   const [scope, setScope] = useState<Scope>('all')
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<'all' | MediaAsset['transcriptStatus']>('all')
@@ -161,4 +161,4 @@ export function MediaLibraryView({ library, history, onLibraryChange, onOpenTran
       </section>
     </main>
   )
-}
+})

@@ -252,7 +252,7 @@ function comparableText(text: string): ComparableText {
 }
 
 function levenshtein(left: string, right: string): number {
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index)
   for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
     const current = [leftIndex]
     for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
@@ -262,7 +262,7 @@ function levenshtein(left: string, right: string): number {
         previous[rightIndex - 1] + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
       )
     }
-    previous.splice(0, previous.length, ...current)
+    previous = current
   }
   return previous[right.length]
 }

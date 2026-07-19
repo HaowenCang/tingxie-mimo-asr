@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Check, FileAudio, FileVideo, ListMusic, MoreHorizontal, RotateCcw, Square, X } from 'lucide-react'
 import type { QueueFile } from '../types'
 import { extensionOf, formatBytes, formatDuration, statusLabel } from '../utils'
@@ -15,7 +16,7 @@ function isVideo(name: string): boolean {
   return /\.(mp4|mov|mkv|avi|webm|wmv|mpeg|mpg)$/i.test(name)
 }
 
-export function QueuePanel({ files, selectedId, onSelect, onCancel, onRemove, onRetry }: QueuePanelProps) {
+export const QueuePanel = memo(function QueuePanel({ files, selectedId, onSelect, onCancel, onRemove, onRetry }: QueuePanelProps) {
   return (
     <section className="queue-section">
       <div className="section-heading"><div><h2>转写队列</h2><p>新加入的文件会在这里显示处理状态</p></div><span>{files.length} 个文件</span></div>
@@ -53,4 +54,4 @@ export function QueuePanel({ files, selectedId, onSelect, onCancel, onRemove, on
       </div>
     </section>
   )
-}
+})

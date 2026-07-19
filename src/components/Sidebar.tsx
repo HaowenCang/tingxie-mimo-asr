@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Library, PanelLeftClose, PanelLeftOpen, Settings, SquarePlus, Waves } from 'lucide-react'
 
 interface SidebarProps {
@@ -8,7 +9,7 @@ interface SidebarProps {
   onSettings(): void
 }
 
-export function Sidebar({ current, collapsed, onNavigate, onToggle, onSettings }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ current, collapsed, onNavigate, onToggle, onSettings }: SidebarProps) {
   return (
     <aside className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="brand"><Waves size={24} strokeWidth={2.2} /><span>听写</span></div>
@@ -26,4 +27,4 @@ export function Sidebar({ current, collapsed, onNavigate, onToggle, onSettings }
       </div>
     </aside>
   )
-}
+})
