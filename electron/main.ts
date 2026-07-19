@@ -63,6 +63,8 @@ import {
   resolveManagedMediaPath,
   type MediaLibraryIndex,
 } from './media-library'
+import { MediaLibraryStore } from './media-library-store'
+import { planMediaImportConcurrency, shouldEmitImportProgress } from './media-import-performance'
 import {
   serviceEndpoint,
   DEFAULT_APP_PREFERENCES,
@@ -76,6 +78,7 @@ import {
   type Language,
   type MediaAsset,
   type MediaInfo,
+  type MediaImportProgress,
   type MediaImportResult,
   type MediaLibrarySnapshot,
   type ParagraphLength,
@@ -183,16 +186,14 @@ function mediaLibraryRoot(settings?: StoredSettings): string {
   return path.resolve(settings?.mediaLibraryRoot || defaultMediaLibraryRoot())
 }
 
-function mediaLibraryIndexPath(root: string): string {
-  return path.join(root, 'index.json')
-}
+const mediaLibraryStore = new MediaLibraryStore()
 
 async function readMediaLibrary(settings?: StoredSettings): Promise<MediaLibraryIndex> {
-  return readJson<MediaLibraryIndex>(mediaLibraryIndexPath(mediaLibraryRoot(settings)), { version: 1, folders: [], assets: [] })
+  return mediaLibraryStore.read(mediaLibraryRoot(settings))
 }
 
 async function writeMediaLibrary(settings: StoredSettings, index: MediaLibraryIndex): Promise<void> {
-  await writeJson(mediaLibraryIndexPath(mediaLibraryRoot(settings)), index)
+  await mediaLibraryStore.write(mediaLibraryRoot(settings), index)
 }
 
 function publicMediaLibrary(settings: StoredSettings, index: MediaLibraryIndex): MediaLibrarySnapshot {
@@ -213,12 +214,24 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T
   return Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker())).then(() => results)
 }
 
-async function probeAllAssets(allAssets: MediaAsset[], newAssetIds: Set<string>, root: string): Promise<MediaAsset[]> {
-  return mapConcurrent(allAssets, 6, async (asset) => {
-    if (!newAssetIds.has(asset.id)) return asset
+async function probeAllAssets(
+  allAssets: MediaAsset[],
+  newAssetIds: Set<string>,
+  root: string,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<MediaAsset[]> {
+  const concurrency = planMediaImportConcurrency(os.cpus().length, activeJobs.size > 0).probe
+  const pending = allAssets.filter((asset) => newAssetIds.has(asset.id))
+  let completed = 0
+  onProgress?.(completed, pending.length)
+  const probed = await mapConcurrent(pending, concurrency, async (asset) => {
     const duration = await probe(resolveManagedMediaPath(root, asset)).then((info) => publicMediaInfo(info).duration).catch(() => 0)
-    return { ...asset, duration }
+    completed += 1
+    onProgress?.(completed, pending.length)
+    return [asset.id, duration] as const
   })
+  const durations = new Map(probed)
+  return allAssets.map((asset) => durations.has(asset.id) ? { ...asset, duration: durations.get(asset.id) } : asset)
 }
 
 let diagnosticLogWriter: DiagnosticLogWriter | undefined
@@ -1112,9 +1125,10 @@ app.whenReady().then(async () => {
     return publicMediaLibrary(settings, await readMediaLibrary(settings))
   })
 
-  ipcMain.handle('library:import', async (_event, input: { sources: SelectedMedia[]; folderId?: string }): Promise<MediaImportResult> => {
+  ipcMain.handle('library:import', async (event, input: { sources: SelectedMedia[]; folderId?: string }): Promise<MediaImportResult> => {
     const settings = await readCachedSettings()
     const root = mediaLibraryRoot(settings)
+    const report = (progress: MediaImportProgress) => event.sender.send('library:import-progress', progress)
     const result = await importMediaAssets({
       index: await readMediaLibrary(settings),
       libraryRoot: root,
@@ -1122,12 +1136,19 @@ app.whenReady().then(async () => {
       folderId: input.folderId,
       createId: randomUUID,
       now: () => new Date().toISOString(),
+      copyConcurrency: planMediaImportConcurrency(os.cpus().length, activeJobs.size > 0).copy,
+      onCopyProgress: (completed, total) => {
+        if (shouldEmitImportProgress(completed, total)) report({ stage: 'copying', completed, total, detail: `正在复制媒体 ${completed}/${total}` })
+      },
     })
     const withMediaInfo: MediaLibraryIndex = {
       ...result.index,
-      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root),
+      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root, (completed, total) => {
+        if (shouldEmitImportProgress(completed, total)) report({ stage: 'probing', completed, total, detail: `正在读取媒体信息 ${completed}/${total}` })
+      }),
     }
     await writeMediaLibrary(settings, withMediaInfo)
+    report({ stage: 'complete', completed: input.sources.length, total: input.sources.length, detail: `已导入 ${result.imported.length} 个媒体` })
     return {
       library: publicMediaLibrary(settings, withMediaInfo),
       importedIds: result.imported.map((asset) => asset.id),
@@ -1135,18 +1156,30 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('library:import-folder', async (_event, folderId?: string): Promise<MediaImportResult | undefined> => {
+  ipcMain.handle('library:import-folder', async (event, folderId?: string): Promise<MediaImportResult | undefined> => {
     const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: '导入媒体文件夹' })
     if (choice.canceled || !choice.filePaths[0]) return undefined
+    const report = (progress: MediaImportProgress) => event.sender.send('library:import-progress', progress)
+    report({ stage: 'scanning', completed: 0, total: 0, detail: '正在扫描文件夹' })
     const sources = await scanMediaDirectory(choice.filePaths[0])
+    report({ stage: 'scanning', completed: sources.length, total: sources.length, detail: `已找到 ${sources.length} 个媒体文件` })
     const settings = await readCachedSettings()
     const root = mediaLibraryRoot(settings)
-    const result = await importMediaAssets({ index: await readMediaLibrary(settings), libraryRoot: root, sources, folderId, createId: randomUUID, now: () => new Date().toISOString() })
+    const result = await importMediaAssets({
+      index: await readMediaLibrary(settings), libraryRoot: root, sources, folderId, createId: randomUUID, now: () => new Date().toISOString(),
+      copyConcurrency: planMediaImportConcurrency(os.cpus().length, activeJobs.size > 0).copy,
+      onCopyProgress: (completed, total) => {
+        if (shouldEmitImportProgress(completed, total)) report({ stage: 'copying', completed, total, detail: `正在复制媒体 ${completed}/${total}` })
+      },
+    })
     const next: MediaLibraryIndex = {
       ...result.index,
-      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root),
+      assets: await probeAllAssets(result.index.assets, new Set(result.imported.map((item) => item.id)), root, (completed, total) => {
+        if (shouldEmitImportProgress(completed, total)) report({ stage: 'probing', completed, total, detail: `正在读取媒体信息 ${completed}/${total}` })
+      }),
     }
     await writeMediaLibrary(settings, next)
+    report({ stage: 'complete', completed: sources.length, total: sources.length, detail: `已导入 ${result.imported.length} 个媒体` })
     return { library: publicMediaLibrary(settings, next), importedIds: result.imported.map((asset) => asset.id), duplicateIds: result.duplicates.map((asset) => asset.id) }
   })
 
@@ -1182,9 +1215,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('library:delete-assets', async (_event, ids: string[]): Promise<MediaLibrarySnapshot> => {
     const settings = await readCachedSettings()
     const index = await readMediaLibrary(settings)
-    const deleting = index.assets.filter((asset) => ids.includes(asset.id))
+    const idSet = new Set(ids)
+    const deleting = index.assets.filter((asset) => idSet.has(asset.id))
     await Promise.all(deleting.map((asset) => fs.rm(resolveManagedMediaPath(mediaLibraryRoot(settings), asset), { force: true })))
-    const next = { ...index, assets: index.assets.filter((asset) => !ids.includes(asset.id)) }
+    const next = { ...index, assets: index.assets.filter((asset) => !idSet.has(asset.id)) }
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
@@ -1245,7 +1279,9 @@ app.whenReady().then(async () => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       })
       currentSettings.mediaLibraryRoot = nextRoot
-      await writeJson(settingsPath(), currentSettings); invalidateSettings()
+      await writeJson(settingsPath(), currentSettings)
+      invalidateSettings()
+      mediaLibraryStore.invalidate()
     }
     return publicMediaLibrary(currentSettings, await readMediaLibrary(currentSettings))
   })

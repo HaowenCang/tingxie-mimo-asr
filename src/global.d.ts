@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from '../electron/types'
 
 declare global {
   interface Window {
@@ -10,6 +10,7 @@ declare global {
       getMediaLibrary(): Promise<MediaLibrarySnapshot>
       importMedia(sources: SelectedMedia[], folderId?: string): Promise<MediaImportResult>
       importMediaFolder(folderId?: string): Promise<MediaImportResult | undefined>
+      onMediaImportProgress(callback: (event: MediaImportProgress) => void): () => void
       createMediaFolder(name: string): Promise<MediaLibrarySnapshot>
       renameMediaFolder(id: string, name: string): Promise<MediaLibrarySnapshot>
       renameMediaAsset(id: string, name: string): Promise<MediaLibrarySnapshot>

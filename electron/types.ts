@@ -55,6 +55,13 @@ export interface MediaImportResult {
   duplicateIds: string[]
 }
 
+export interface MediaImportProgress {
+  stage: 'scanning' | 'copying' | 'probing' | 'complete'
+  completed: number
+  total: number
+  detail: string
+}
+
 export interface MediaInfo {
   duration: number
   codec: string

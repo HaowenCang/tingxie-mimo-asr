@@ -13,7 +13,7 @@
 | 阶段 1：超长转写渲染与编辑 | 🟢 已完成 | PR #5 · `codex/perf-transcript-rendering` | 1,200 段 SSR 平均耗时 123.30ms → 15.53ms（-87.4%）；90/90 测试、构建、生产依赖审计、真实界面验收及 GitHub Windows `test-and-build`（1m27s）通过 |
 | 阶段 2：ASR 内存与主进程吞吐 | 🟢 已完成 | PR #6 · `codex/perf-asr-memory` | RPM 后编码、128–192MiB 字节闸门、取消安全和批量日志已完成；96/96 测试、构建、生产依赖审计及 GitHub Windows `test-and-build`（1m20s）通过 |
 | 阶段 3：历史存储与启动加载 | 🟢 已完成 | PR #7 · `codex/perf-history-store` | 分离存储、摘要启动、按 ID 加载和单段 patch 已完成；本机启动历史 payload 3,203,529B → 7,453B（-99.77%）；102/102 测试、构建、审计和界面验收通过；GitHub Windows CI 通过（1m30s） |
-| 阶段 4：媒体库扩展性 | ⚪ 未开始 | — | — |
+| 阶段 4：媒体库扩展性 | 🟡 PR 验证中 | `codex/perf-media-library` | 万级派生索引、虚拟列表、Set/Map 查找、原子缓存、签名去重、受控复制/探测和分阶段进度已完成；111/111 测试、构建、审计及真实界面验收通过，等待独立 PR/CI 检查点 |
 | 阶段 5：AI、搜索、启动包与 Liquid Glass | ⚪ 未开始 | — | — |
 | 全量验证与 v0.12.0 发布 | ⚪ 未开始 | — | — |
 

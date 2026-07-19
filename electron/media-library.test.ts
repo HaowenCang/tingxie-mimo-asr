@@ -56,4 +56,56 @@ describe('managed media library', () => {
       ['B.m4a', 'meetings', 'media/b.m4a'],
     ])
   })
+
+  it('deduplicates a large import batch by a stable source signature', async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'tingxie-library-dedupe-'))
+    tempDirs.push(temp)
+    const source = path.join(temp, 'same.m4a')
+    await writeFile(source, Buffer.from('same bytes'))
+    const existing: MediaLibraryIndex = {
+      version: 1,
+      folders: [],
+      assets: [{
+        id: 'existing', displayName: 'same.m4a', originalName: 'same.m4a', relativePath: 'media/existing.m4a', size: 10,
+        extension: 'M4A', transcriptStatus: 'untranscribed', managed: true, importedAt: 'now', updatedAt: 'now', originalPath: source,
+      }],
+    }
+
+    const result = await importMediaAssets({
+      index: existing,
+      libraryRoot: path.join(temp, 'library'),
+      sources: Array.from({ length: 2_000 }, () => ({ path: source, name: 'same.m4a', size: 10 })),
+      createId: () => 'should-not-run',
+      now: () => 'now',
+    })
+
+    expect(result.imported).toHaveLength(0)
+    expect(result.duplicates).toHaveLength(2_000)
+  })
+
+  it('reports bounded-copy progress through completion', async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), 'tingxie-library-progress-'))
+    tempDirs.push(temp)
+    const sources = await Promise.all(['a.m4a', 'b.m4a'].map(async (name) => {
+      const file = path.join(temp, name)
+      await writeFile(file, Buffer.from(name))
+      return { path: file, name, size: Buffer.byteLength(name) }
+    }))
+    const progress: Array<[number, number]> = []
+    let id = 0
+
+    const result = await importMediaAssets({
+      index: { version: 1, folders: [], assets: [] },
+      libraryRoot: path.join(temp, 'library'),
+      sources,
+      createId: () => `asset-${id++}`,
+      now: () => 'now',
+      copyConcurrency: 1,
+      onCopyProgress: (completed, total) => progress.push([completed, total]),
+    })
+
+    expect(result.imported).toHaveLength(2)
+    expect(progress.at(0)).toEqual([0, 2])
+    expect(progress.at(-1)).toEqual([2, 2])
+  })
 })
