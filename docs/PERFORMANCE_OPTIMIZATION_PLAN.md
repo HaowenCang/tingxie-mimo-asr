@@ -9,7 +9,7 @@
 
 | 阶段 | 状态 | 分支 / PR | 验证与备注 |
 |---|---|---|---|
-| 阶段 0：GitHub 安全基线和性能反馈环 | 🔴 等待授权 | PR #1、#3 已合并；本地 `codex/perf-baseline-and-ci` 提交 `de6fc21` | checkpoint、基准、Windows CI 均已完成；86/86 测试和生产构建通过；GitHub token 缺少 `workflow` scope，需完成一次设备授权后推送 |
+| 阶段 0：GitHub 安全基线和性能反馈环 | 🟢 已完成 | PR #1、#3 已合并；PR #4 | checkpoint、合成基准和 Windows CI 已建立；86/86 测试、本机生产构建及 GitHub `test-and-build`（1m18s）通过；主分支保护在 PR #4 合并后启用 |
 | 阶段 1：超长转写渲染与编辑 | ⚪ 未开始 | — | — |
 | 阶段 2：ASR 内存与主进程吞吐 | ⚪ 未开始 | — | — |
 | 阶段 3：历史存储与启动加载 | ⚪ 未开始 | — | — |
