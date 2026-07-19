@@ -14,6 +14,7 @@ import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
 import { loadStartupData } from './startup-data'
+import { applyLatestProgressEvents } from './progress-batching'
 
 const demoParameters = new URLSearchParams(location.search)
 const isDemo = import.meta.env.DEV && demoParameters.has('demo')
@@ -110,20 +111,20 @@ export function App() {
   const preferredChatPanelWidth = useRef(DEFAULT_CHAT_PANEL_WIDTH)
   const queue = useRef<Promise<void>>(Promise.resolve())
   const historySaveTimer = useRef<number | undefined>(undefined)
-  const progressFrameRef = useRef(0)
+  const progressFrameRef = useRef<number | undefined>(undefined)
+  const pendingProgressEventsRef = useRef(new Map<string, ProgressEvent>())
   const autoAnalysisAttempted = useRef(new Set<string>())
 
-  function scheduleProgressUpdate(event: ProgressEvent) {
-    cancelAnimationFrame(progressFrameRef.current)
+  const scheduleProgressUpdate = useCallback((event: ProgressEvent) => {
+    pendingProgressEventsRef.current.set(event.id, event)
+    if (progressFrameRef.current !== undefined) return
     progressFrameRef.current = requestAnimationFrame(() => {
-      setFiles((current) => current.map((file) => file.id === event.id ? {
-        ...file,
-        status: event.stage === 'cancelled' ? 'cancelled' : event.stage,
-        progress: event.progress,
-        detail: event.detail,
-      } : file))
+      progressFrameRef.current = undefined
+      const events = [...pendingProgressEventsRef.current.values()]
+      pendingProgressEventsRef.current.clear()
+      setFiles((current) => applyLatestProgressEvents(current, events))
     })
-  }
+  }, [])
 
   useEffect(() => {
     const root = document.documentElement
@@ -190,12 +191,13 @@ export function App() {
         if (data.mediaLibrary) setMediaLibrary(data.mediaLibrary)
       })
       .finally(() => setLoadingSettings(false))
-    return window.tingxie.onProgress((event) => scheduleProgressUpdate(event))
-  }, [])
-
-  const updateFromProgress = useCallback((event: ProgressEvent) => {
-    scheduleProgressUpdate(event)
-  }, [])
+    const unsubscribe = window.tingxie.onProgress(scheduleProgressUpdate)
+    return () => {
+      unsubscribe()
+      if (progressFrameRef.current !== undefined) cancelAnimationFrame(progressFrameRef.current)
+      pendingProgressEventsRef.current.clear()
+    }
+  }, [scheduleProgressUpdate])
 
   function enqueue(file: QueueFile) {
     queue.current = queue.current.then(async () => {
@@ -279,17 +281,17 @@ export function App() {
     setSettings(next)
   }
 
-  async function savePreferences(preferences: AppPreferences) {
+  const savePreferences = useCallback(async (preferences: AppPreferences) => {
     const next = window.tingxie ? await window.tingxie.savePreferences(preferences) : preferences
     setSettings((current) => ({ ...current, preferences: next }))
-  }
+  }, [])
 
-  function openNewTranscriptWorkspace() {
+  const openNewTranscriptWorkspace = useCallback(() => {
     setCurrentPage('new')
     setSelectedResult(undefined)
     setChatOpen(false)
     setAnalysisError('')
-  }
+  }, [])
 
   function navigate(page: 'new' | 'library') {
     if (page === 'new') {
@@ -312,7 +314,7 @@ export function App() {
     if (normalized !== settings.preferences.chatPanelWidth) void savePreferences({ ...settings.preferences, chatPanelWidth: normalized }).catch(() => undefined)
   }
 
-  function updateResult(result: TranscriptResult, persist = true) {
+  const updateResult = useCallback((result: TranscriptResult, persist = true) => {
     setSelectedResult(result)
     setFiles((current) => current.map((file) => file.id === result.id ? { ...file, result } : file))
     setHistory((current) => [result, ...current.filter((item) => item.id !== result.id)])
@@ -320,9 +322,9 @@ export function App() {
       window.clearTimeout(historySaveTimer.current)
       historySaveTimer.current = window.setTimeout(() => window.tingxie?.updateHistory(result).catch(() => undefined), 450)
     }
-  }
+  }, [])
 
-  async function generateAnalysis() {
+  const generateAnalysis = useCallback(async () => {
     if (!selectedResult || analysisBusy) return
     const provider = aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)
     if (!provider?.hasApiKey) {
@@ -340,7 +342,13 @@ export function App() {
     try { updateResult(await window.tingxie.generateAnalysis({ transcript: selectedResult, providerId: provider.id }), false) }
     catch (error) { setAnalysisError(friendlyIpcError(error, '智能速览生成失败')) }
     finally { setAnalysisBusy(false) }
-  }
+  }, [selectedResult, analysisBusy, aiSettings, updateResult])
+
+  const exportSelectedResult = useCallback(() => {
+    if (selectedResult) void window.tingxie?.exportTranscript(selectedResult)
+  }, [selectedResult])
+
+  const openChat = useCallback(() => setChatOpen(true), [])
 
   async function removeHistory(item: TranscriptResult) {
     await window.tingxie?.deleteHistory(item.id)
@@ -393,8 +401,8 @@ export function App() {
           preferences={settings.preferences}
           onChange={updateResult}
           onGenerateAnalysis={generateAnalysis}
-          onExport={() => window.tingxie?.exportTranscript(selectedResult)}
-          onOpenChat={() => setChatOpen(true)}
+          onExport={exportSelectedResult}
+          onOpenChat={openChat}
           onNewTranscript={openNewTranscriptWorkspace}
           analysisBusy={analysisBusy}
           analysisError={analysisError}

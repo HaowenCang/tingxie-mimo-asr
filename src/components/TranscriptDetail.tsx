@@ -1,8 +1,11 @@
 import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Download, FileText, LoaderCircle, Search, Sparkles, WandSparkles, X } from 'lucide-react'
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 import { AudioPlayer } from './AudioPlayer'
+import { EditableTranscriptSegment } from './EditableTranscriptSegment'
+import { findActiveTranscriptSegment } from './playback-timeline'
 import { findTranscriptMatches, type TranscriptMatch } from './searchTranscript'
 
 interface TranscriptDetailProps {
@@ -40,25 +43,59 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
   const [activeMatch, setActiveMatch] = useState(0)
   const [overviewOpen, setOverviewOpen] = useState(true)
   const [tab, setTab] = useState<'chapters' | 'speech' | 'points'>('chapters')
-  const [currentTime, setCurrentTime] = useState(0)
+  const [activeSegment, setActiveSegment] = useState(-1)
   const [seekTo, setSeekTo] = useState<{ time: number; nonce: number }>()
   const [copied, setCopied] = useState(false)
   const [jumpedSegment, setJumpedSegment] = useState<number>()
+  const [timelineOffset, setTimelineOffset] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const playbackTimeRef = useRef(0)
   const jumpHighlightTimer = useRef<number | undefined>(undefined)
   const chapterBySegment = useMemo(() => new Map(result.analysis?.chapters.map((chapter) => [chapter.startSegmentId, chapter]) || []), [result.analysis])
-  const activeSegment = useMemo(() => result.segments.findIndex((segment, index) => {
-    const next = result.segments[index + 1]
-    return segment.status !== 'failed' && currentTime >= segment.start && currentTime < (segment.end ?? next?.start ?? result.duration)
-  }), [result.segments, result.duration, currentTime])
   const searchMatches = useMemo(() => findTranscriptMatches(result.segments, deferredQuery), [result.segments, deferredQuery])
+  const matchingSegmentIndexes = useMemo(() => new Set(searchMatches.map((match) => match.segmentIndex)), [searchMatches])
+  const rowVirtualizer = useVirtualizer({
+    count: result.segments.length,
+    getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => result.segments[index]?.id || `segment-${index}`,
+    estimateSize: () => 126,
+    overscan: 7,
+    scrollMargin: timelineOffset,
+    initialRect: { width: 900, height: 720 },
+  })
+
+  const handlePlaybackProgress = useCallback((time: number) => {
+    playbackTimeRef.current = time
+    const next = findActiveTranscriptSegment(result.segments, result.duration, time)
+    setActiveSegment((current) => current === next ? current : next)
+  }, [result.segments, result.duration])
 
   useEffect(() => setActiveMatch(0), [deferredQuery])
 
   useEffect(() => {
-    if (!preferences.autoFollow || activeSegment < 0 || currentTime <= 0.05) return
-    scrollRef.current?.querySelector(`[data-segment-index="${activeSegment}"]`)?.scrollIntoView({ behavior: preferences.reducedMotion ? 'auto' : 'smooth', block: 'center' })
-  }, [activeSegment, preferences.autoFollow, preferences.reducedMotion])
+    playbackTimeRef.current = 0
+    setActiveSegment(-1)
+  }, [result.id])
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current
+    const timeline = timelineRef.current
+    if (!scroll || !timeline || typeof ResizeObserver === 'undefined') return
+    const update = () => {
+      const next = timeline.offsetTop
+      setTimelineOffset((current) => current === next ? current : next)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    for (const child of scroll.children) observer.observe(child)
+    return () => observer.disconnect()
+  }, [overviewOpen, deferredQuery, result.analysis, analysisError])
+
+  useEffect(() => {
+    if (!preferences.autoFollow || activeSegment < 0 || playbackTimeRef.current <= 0.05) return
+    rowVirtualizer.scrollToIndex(activeSegment, { align: 'center' })
+  }, [activeSegment, preferences.autoFollow, rowVirtualizer])
 
   useEffect(() => () => window.clearTimeout(jumpHighlightTimer.current), [])
 
@@ -78,9 +115,8 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     if (!segment) return
     seek(segment.manualStart ?? segment.start)
     setJumpedSegment(index)
-    const target = scrollRef.current?.querySelector<HTMLElement>(`[data-segment-index="${index}"]`)
-    target?.scrollIntoView({ behavior: preferences.reducedMotion ? 'auto' : 'smooth', block: 'center' })
-    target?.focus({ preventScroll: true })
+    rowVirtualizer.scrollToIndex(index, { align: 'center' })
+    requestAnimationFrame(() => scrollRef.current?.querySelector<HTMLElement>(`[data-segment-index="${index}"]`)?.focus({ preventScroll: true }))
     window.clearTimeout(jumpHighlightTimer.current)
     jumpHighlightTimer.current = window.setTimeout(() => setJumpedSegment(undefined), 1600)
   }
@@ -105,10 +141,14 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     jumpToSegment(searchMatches[normalized].segmentIndex)
   }
 
-  function updateSegment(index: number, patch: Partial<TranscriptResult['segments'][number]>) {
+  const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>) => {
     const segments = result.segments.map((segment, segmentIndex) => segmentIndex === index ? { ...segment, ...patch } : segment)
     onChange({ ...result, segments, text: transcriptText(segments) })
-  }
+  }, [result, onChange])
+
+  const commitSegmentText = useCallback((index: number, text: string) => {
+    updateSegment(index, { text })
+  }, [updateSegment])
 
   return <main className="transcript-detail">
     <header className="detail-header glass-section">
@@ -135,22 +175,24 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
           {searchMatches.length ? <div className="search-result-list">{searchMatches.map((match, index) => <button key={match.id} className={activeMatch === index ? 'active' : ''} onClick={() => jumpToMatch(index)}><time>≈ {formatDuration(result.segments[match.segmentIndex].start)}</time><span><MarkedExcerpt match={match} /></span></button>)}</div> : <p>请检查关键词，或尝试更短、更常见的词语。</p>}
         </aside>}
         {result.failedSegmentCount ? <div className="transcript-warning"><AlertTriangle size={16} />{result.failedSegmentCount} 个切片重试后仍失败，已保留原时间缺口。</div> : null}
-        <div className="timeline">
-          {result.segments.map((segment, index) => {
+        <div ref={timelineRef} className="timeline" data-virtualized="true" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const index = virtualRow.index
+            const segment = result.segments[index]
             const id = segment.id || `segment-${index}`
             const chapter = chapterBySegment.get(id)
-            const matches = searchMatches.some((match) => match.segmentIndex === index)
-            return <div key={id}>
+            const matches = matchingSegmentIndexes.has(index)
+            return <div key={id} data-index={index} ref={rowVirtualizer.measureElement} className="virtual-timeline-row" style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start - timelineOffset}px)` }}>
               {chapter && <button className="inline-chapter-card" onClick={() => jumpToSegment(index)}><span>章节速览 · ≈ {formatDuration(segment.start)}</span><strong>{chapter.title}</strong><p>{chapter.summary}</p></button>}
               <article data-segment-id={id} data-segment-index={index} tabIndex={-1} className={`timeline-segment ${activeSegment === index ? 'active' : ''} ${jumpedSegment === index ? 'chapter-jump-target' : ''} ${matches ? 'match' : ''} ${segment.status === 'failed' ? 'failed' : ''}`}>
-                <div className="timeline-time"><button onClick={() => seek(segment.manualStart ?? segment.start)}>≈ {formatDuration(segment.manualStart ?? segment.start)}</button><i /><button className="calibrate-button" title="用当前播放位置校正本段起点" onClick={() => updateSegment(index, { start: currentTime, manualStart: currentTime, estimated: false })}><Clock3 size={12} /></button></div>
-                {segment.status === 'failed' ? <div className="failed-segment"><AlertTriangle size={17} /><div><strong>此片段转写失败</strong><p>{segment.error || '未知错误'} · 真实错误尝试 {segment.attempts || 1} 次{segment.rateLimitWaits ? ` · 限流等待 ${segment.rateLimitWaits} 次（不计入重试）` : ''} · {formatDuration(segment.start)}–{formatDuration(segment.end || segment.start)}</p></div></div> : <textarea aria-label={`转写段落 ${index + 1}`} value={segment.text} onChange={(event) => updateSegment(index, { text: event.target.value })} />}
+                <div className="timeline-time"><button onClick={() => seek(segment.manualStart ?? segment.start)}>≈ {formatDuration(segment.manualStart ?? segment.start)}</button><i /><button className="calibrate-button" title="用当前播放位置校正本段起点" onClick={() => updateSegment(index, { start: playbackTimeRef.current, manualStart: playbackTimeRef.current, estimated: false })}><Clock3 size={12} /></button></div>
+                {segment.status === 'failed' ? <div className="failed-segment"><AlertTriangle size={17} /><div><strong>此片段转写失败</strong><p>{segment.error || '未知错误'} · 真实错误尝试 {segment.attempts || 1} 次{segment.rateLimitWaits ? ` · 限流等待 ${segment.rateLimitWaits} 次（不计入重试）` : ''} · {formatDuration(segment.start)}–{formatDuration(segment.end || segment.start)}</p></div></div> : <EditableTranscriptSegment index={index} text={segment.text} onCommit={commitSegmentText} />}
               </article>
             </div>
           })}
         </div>
       </section>
     </div>
-    <AudioPlayer transcript={result} preferences={preferences} seekTo={seekTo} onTimeChange={setCurrentTime} />
+    <AudioPlayer transcript={result} preferences={preferences} seekTo={seekTo} onTimeChange={handlePlaybackProgress} />
   </main>
 })
