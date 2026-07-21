@@ -4,10 +4,11 @@
 
 ## 状态
 
-- 🟡 实现与首轮 Windows CI 完成，等待状态提交 CI、合并与 RC2 发布
-- 分支：`codex/fix-library-queue-glass-selects`
+- 🟢 已完成并发布 `v0.12.0-rc.2`
+- 实现分支：`codex/fix-library-queue-glass-selects`
 - 回退基线：`main` / `9eefa34`
 - 实现提交：`caca99b`
+- 合并提交：`3483621`
 - Pull Request：[#15](https://github.com/HaowenCang/tingxie-mimo-asr/pull/15)
 - 目标版本：`v0.12.0-rc.2`
 - 参考截图：`C:\Users\20659\AppData\Local\Temp\codex-clipboard-cd525ac8-f4e2-40b0-8a02-4f6b9c6a84c0.png`
@@ -48,7 +49,7 @@
 - [x] 对照参考截图检查布局、密度、玻璃材质、控件与文字；空结果栏已移除，队列与侧栏底部精确对齐。
 - [x] NSIS 安装包、隔离用户目录的 `win-unpacked` 启动、FFmpeg/FFprobe 与 SHA-256。
 - [x] 独立实现提交、PR 与首轮 Windows `test-and-build`。
-- [ ] 状态提交 CI、PR 合并和 `v0.12.0-rc.2` prerelease。
+- [x] 状态提交 CI、PR 合并和 `v0.12.0-rc.2` prerelease。
 
 ## 本地产物
 
@@ -58,6 +59,16 @@
 - `win-unpacked`：使用隔离临时用户目录启动成功；测试完成后仅终止本次测试进程。
 - FFmpeg / FFprobe：随包资源存在。
 - 代码签名：未配置，构建器明确跳过签名。
+
+## GitHub RC2 产物
+
+- Release：[v0.12.0-rc.2](https://github.com/HaowenCang/tingxie-mimo-asr/releases/tag/v0.12.0-rc.2)
+- 文件：`Tingxie-0.12.0-rc.2-Setup.exe`
+- 大小：197,363,750 B
+- SHA-256：`BB830A69DE46D71609FE06F0A272B679765818F10920B23798F22D4975C77CC7`
+- Windows Runner 工作流：`29856072894`，3 分 39 秒完成测试、NSIS、SHA、artifact 与 prerelease 发布。
+- 公开 `SHA256SUMS.txt` 与 GitHub 记录的安装包摘要一致。
+- 本机与 Runner 的安装包哈希不同，原因是 NSIS 包含构建时间等非确定性元数据；公开校验以同一 Runner 生成并上传的 SHA 清单为准。
 
 ## 数据安全规则
 
@@ -71,5 +82,6 @@
 
 - 不移动或覆盖现有 `v0.12.0-rc.1` 标签与 Release。
 - 本阶段使用独立 PR，受保护 `main` 必须通过 `test-and-build`。
-- PR #15 首轮 Windows `test-and-build` 已通过；状态文档提交仍需再次通过同一门禁。
+- PR #15 的实现和状态提交均通过 Windows `test-and-build`，并 squash merge 为 `3483621`。
+- 注释标签 `v0.12.0-rc.2` 指向该实现提交；RC1 标签与 Release 保持不变。
 - 严重问题可整体回退本 PR，不重写 `main` 历史。
