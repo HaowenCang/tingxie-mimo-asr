@@ -4,25 +4,35 @@
 
 ## 当前稳定基线
 
-- 阶段 0–4 已通过独立 PR、受保护分支和 GitHub Windows CI。
-- 阶段 4 对应 PR #8；其 squash merge 是本次会话的最后一个仓库操作。
-- 本次任务已按用户要求在阶段 4 后停止，没有开始阶段 5，也没有升级版本号或构建安装包。
+- 阶段 0–5 已通过独立 PR、受保护分支和 GitHub Windows CI。
+- 阶段 5 对应 PR #9，squash merge 为 `4b6dbe9`。
+- `v0.12.0-rc.1` 已由 Windows Runner 构建并发布为 GitHub prerelease。
+- 当前正式发布门槛是用户实机 RC 验收；尚未创建正式 `v0.12.0` 标签。
 
 ## 当前阶段
 
-阶段 5 已完成并通过 PR #9 squash merge 为 `4b6dbe9`。v0.12.0-rc.1 本机验证和 PR #11 已通过。首次标签工作流在 NSIS 生成后因 electron-builder 自动发布缺少令牌而失败；失败标签已删除，当前在 `codex/fix-release-workflow` 通过 `--publish never` 分离构建与发布。修复合并前不会重建标签。详细状态见 `docs/performance/RELEASE_V0.12.0.md`。
+阶段 5 已完成。RC 准备、构建修复和 Runner 发布分别通过 PR #11、#12、#13；当前标签 `v0.12.0-rc.1` 指向 `4367dba`。标签工作流 `29837569301` 以 3m28s 完成测试、NSIS、SHA、artifact 和 GitHub prerelease 发布。公开安装包 SHA-256 为 `4CAAE95B41FCCC3BC770BA7A7DEE373BC96BEAABC3A08C3A3DC3DEBC1ACE50B4`。详细状态见 `docs/performance/RELEASE_V0.12.0.md`。
 
 ## 下一次从哪里继续
 
-若中途暂停，下一次会话从 `docs/performance/RELEASE_V0.12.0.md` 的首个未完成项继续：
+下一次会话从 `docs/performance/RELEASE_V0.12.0.md` 的 RC 实机验收清单继续：
 
 ```powershell
 git switch main
 git pull --ff-only origin main
-git switch codex/release-v0.12.0-rc1
+git status --short --branch
 ```
 
-先确认工作区与远端分支状态，再继续 RC 验证；RC 通过前不创建正式 `v0.12.0` 标签。
+先安装 GitHub prerelease，在不删除用户数据的前提下验证旧数据兼容、真实长转写、批量媒体、AI 长对话和长时间播放。RC 通过前不创建正式 `v0.12.0` 标签。
+
+## GitHub 与回滚点
+
+- RC Release：https://github.com/HaowenCang/tingxie-mimo-asr/releases/tag/v0.12.0-rc.1
+- 性能阶段：`4b6dbe9`（PR #9）
+- RC 准备：`d16b0df`（PR #11）
+- 禁止 electron-builder 自动发布：`0c1f8c0`（PR #12）
+- Runner 受控发布：`4367dba`（PR #13）
+- 发现阶段性问题时优先 revert 对应 squash merge；不要重写 `main` 历史。
 
 ## 重要约束
 
