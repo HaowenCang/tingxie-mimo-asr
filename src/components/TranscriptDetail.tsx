@@ -1,7 +1,8 @@
 import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Download, FileText, LoaderCircle, Search, Sparkles, WandSparkles, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptResult } from '../../electron/types'
+import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptDuplicateReport, TranscriptResult } from '../../electron/types'
+import { inspectTranscriptDuplicates } from '../../electron/transcript-dedup'
 import { formatDuration } from '../utils'
 import { AudioPlayer } from './AudioPlayer'
 import { EditableTranscriptSegment } from './EditableTranscriptSegment'
@@ -51,6 +52,10 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
   const [copied, setCopied] = useState(false)
   const [jumpedSegment, setJumpedSegment] = useState<number>()
   const [timelineOffset, setTimelineOffset] = useState(0)
+  const [duplicateReport, setDuplicateReport] = useState<TranscriptDuplicateReport>()
+  const [duplicateConfirmOpen, setDuplicateConfirmOpen] = useState(false)
+  const [duplicateBusy, setDuplicateBusy] = useState(false)
+  const [duplicateError, setDuplicateError] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   const playbackTimeRef = useRef(0)
@@ -87,6 +92,20 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     playbackTimeRef.current = 0
     setActiveSegment(-1)
   }, [result.id])
+
+  useEffect(() => {
+    let active = true
+    setDuplicateConfirmOpen(false)
+    setDuplicateError('')
+    if (!window.tingxie) {
+      setDuplicateReport({ ...inspectTranscriptDuplicates(result), canUndo: false })
+      return () => { active = false }
+    }
+    window.tingxie.inspectTranscriptDuplicates(result.id)
+      .then((report) => { if (active) setDuplicateReport(report) })
+      .catch(() => { if (active) setDuplicateReport(undefined) })
+    return () => { active = false }
+  }, [result.id, result.revision])
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current
@@ -151,6 +170,41 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     jumpToSegment(searchMatches[normalized].segmentIndex)
   }
 
+  async function repairDuplicates() {
+    if (!window.tingxie) return
+    setDuplicateBusy(true)
+    setDuplicateError('')
+    try {
+      const repair = await window.tingxie.repairTranscriptDuplicates(result.id)
+      onChange(repair.result, false)
+      setDuplicateReport({
+        duplicateGroups: 0,
+        removableSegments: 0,
+        removableCharacters: 0,
+        canUndo: repair.canUndo,
+      })
+      setDuplicateConfirmOpen(false)
+    } catch (error) {
+      setDuplicateError(error instanceof Error ? error.message : '重复内容修复失败')
+    } finally {
+      setDuplicateBusy(false)
+    }
+  }
+
+  async function undoDuplicateRepair() {
+    if (!window.tingxie) return
+    setDuplicateBusy(true)
+    setDuplicateError('')
+    try {
+      const restored = await window.tingxie.undoTranscriptDuplicateRepair(result.id)
+      onChange(restored, false)
+    } catch (error) {
+      setDuplicateError(error instanceof Error ? error.message : '撤销重复内容修复失败')
+    } finally {
+      setDuplicateBusy(false)
+    }
+  }
+
   const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>, persist = true) => {
     const segments = result.segments.map((segment, segmentIndex) => segmentIndex === index ? { ...segment, ...patch } : segment)
     onChange({ ...result, revision: (result.revision ?? 0) + 1, segments, text: transcriptText(segments) }, persist)
@@ -180,6 +234,18 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
           <AnalysisView analysis={result.analysis} tab={tab} onChapterSelect={jumpToChapter} />
         </> : analysisError ? null : <div className="overview-empty"><p>生成关键词、全文概要、章节、内容脉络、要点与行动项。当前版本不会推断或展示说话人身份。</p></div>)}
       </section>
+
+      {(duplicateReport?.removableSegments || duplicateReport?.canUndo || duplicateError) ? <section className="duplicate-repair-banner glass-section" aria-live="polite">
+        <div><AlertTriangle size={18} /><span>{duplicateReport?.removableSegments
+          ? <><strong>检测到连续重复内容</strong><p>{duplicateReport.duplicateGroups} 组、共 {duplicateReport.removableSegments} 个重复段。仅匹配同一音频切片内连续且一致的长文本。</p></>
+          : <><strong>重复内容修复已完成</strong><p>原记录已单独备份，可随时撤销恢复。</p></>}</span></div>
+        {duplicateError ? <p className="duplicate-repair-error">{duplicateError}</p> : null}
+        <div>{duplicateReport?.removableSegments
+          ? duplicateConfirmOpen
+            ? <><button className="primary-button compact" disabled={duplicateBusy} onClick={() => void repairDuplicates()}>{duplicateBusy ? <LoaderCircle className="spin" size={14} /> : null}确认修复</button><button disabled={duplicateBusy} onClick={() => setDuplicateConfirmOpen(false)}>取消</button></>
+            : <button className="primary-button compact" onClick={() => setDuplicateConfirmOpen(true)}>预览并修复</button>
+          : duplicateReport?.canUndo ? <button disabled={duplicateBusy} onClick={() => void undoDuplicateRepair()}>{duplicateBusy ? <LoaderCircle className="spin" size={14} /> : null}撤销修复</button> : null}</div>
+      </section> : null}
 
       <section className="original-section">
         <header><div><FileText size={18} /><h2>原文</h2></div><span>点击 ≈ 时间可播放核对 · 可直接编辑</span></header>

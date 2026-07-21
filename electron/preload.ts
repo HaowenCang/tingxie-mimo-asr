@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from './types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary } from './types'
 
 contextBridge.exposeInMainWorld('tingxie', {
   openFiles: (): Promise<SelectedMedia[]> => ipcRenderer.invoke('media:open'),
@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld('tingxie', {
   getTranscript: (id: string): Promise<TranscriptResult | undefined> => ipcRenderer.invoke('history:record:get', id),
   updateHistory: (result: TranscriptResult): Promise<TranscriptSummary> => ipcRenderer.invoke('history:update', result),
   patchTranscriptSegment: (input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }): Promise<TranscriptSummary> => ipcRenderer.invoke('history:segment:patch', input),
+  renameTranscript: (id: string, name: string): Promise<TranscriptResult> => ipcRenderer.invoke('history:rename', { id, name }),
+  inspectTranscriptDuplicates: (id: string): Promise<TranscriptDuplicateReport> => ipcRenderer.invoke('history:duplicates:inspect', id),
+  repairTranscriptDuplicates: (id: string): Promise<TranscriptDuplicateRepairResult> => ipcRenderer.invoke('history:duplicates:repair', id),
+  undoTranscriptDuplicateRepair: (id: string): Promise<TranscriptResult> => ipcRenderer.invoke('history:duplicates:undo', id),
   getMediaUrl: (transcriptId: string): Promise<string> => ipcRenderer.invoke('media:get-url', transcriptId),
   deleteHistory: (id: string) => ipcRenderer.invoke('history:delete', id),
   copyText: (text: string) => ipcRenderer.invoke('transcript:copy', text),

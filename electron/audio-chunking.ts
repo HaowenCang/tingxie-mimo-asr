@@ -327,7 +327,7 @@ export function mergeChunkTranscripts(chunks: ChunkTranscriptOutcome[]): Logical
       })
       continue
     }
-    let text = chunk.text.trim()
+    let text = collapseRepeatedTranscriptBlocks(chunk.text).text.trim()
     if (!text) continue
     const previous = logical.at(-1)
     if (previous && previous.status !== 'failed' && chunk.overlapWithPrevious > 0) {
@@ -359,6 +359,54 @@ function splitTranscriptUnits(text: string): string[] {
     ?.map((unit) => unit.trim())
     .filter(Boolean) || []
   return units.length ? units : [text.trim()].filter(Boolean)
+}
+
+export interface RepeatedTranscriptCollapseResult {
+  text: string
+  repeatGroups: number
+  removedCharacters: number
+}
+
+function joinTranscriptUnits(units: string[]): string {
+  return units.reduce((joined, unit) => appendText(joined, unit), '')
+}
+
+export function collapseRepeatedTranscriptBlocks(text: string): RepeatedTranscriptCollapseResult {
+  const units = splitTranscriptUnits(text)
+  if (units.length < 2) return { text: text.trim(), repeatGroups: 0, removedCharacters: 0 }
+
+  const kept: string[] = []
+  let repeatGroups = 0
+  let removedCharacters = 0
+  let cursor = 0
+  while (cursor < units.length) {
+    const maximumBlockSize = Math.min(8, Math.floor((units.length - cursor) / 2))
+    let collapsed = false
+    for (let blockSize = maximumBlockSize; blockSize >= 1; blockSize -= 1) {
+      const block = units.slice(cursor, cursor + blockSize)
+      const comparableBlock = comparableText(joinTranscriptUnits(block)).value
+      const minimumComparableLength = blockSize === 1 ? 80 : 40
+      if (comparableBlock.length < minimumComparableLength) continue
+      let repetitions = 1
+      while (cursor + (repetitions + 1) * blockSize <= units.length) {
+        const candidate = units.slice(cursor + repetitions * blockSize, cursor + (repetitions + 1) * blockSize)
+        if (comparableText(joinTranscriptUnits(candidate)).value !== comparableBlock) break
+        repetitions += 1
+      }
+      if (repetitions < 2) continue
+      kept.push(...block)
+      removedCharacters += units.slice(cursor + blockSize, cursor + repetitions * blockSize).join('').length
+      repeatGroups += 1
+      cursor += repetitions * blockSize
+      collapsed = true
+      break
+    }
+    if (!collapsed) {
+      kept.push(units[cursor])
+      cursor += 1
+    }
+  }
+  return { text: joinTranscriptUnits(kept), repeatGroups, removedCharacters }
 }
 
 export function transcriptTextWeight(text: string): number {
@@ -476,7 +524,7 @@ export function estimateTranscriptSegments(chunks: ChunkTranscriptOutcome[], med
       return
     }
 
-    let text = chunk.text.trim()
+    let text = collapseRepeatedTranscriptBlocks(chunk.text).text.trim()
     const previous = units.at(-1)
     if (previous && previous.status !== 'failed' && chunk.overlapWithPrevious > 0) {
       text = trimOverlappingPrefix(previous.text, text).text

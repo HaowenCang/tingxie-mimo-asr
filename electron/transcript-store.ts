@@ -3,8 +3,9 @@ import { constants } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { ensureHistoryBackup } from './history-recovery'
+import { inspectTranscriptDuplicates, repairTranscriptDuplicates, type TranscriptDuplicateRepair } from './transcript-dedup'
 import { summarizeTranscript } from './transcript-summary'
-import type { TranscriptResult, TranscriptSegment, TranscriptSummary } from './types'
+import type { TranscriptDuplicateReport, TranscriptResult, TranscriptSegment, TranscriptSummary } from './types'
 
 interface TranscriptStoreOptions {
   storeRoot: string
@@ -49,6 +50,7 @@ async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
 export class TranscriptStore {
   private readonly indexFile: string
   private readonly recordsDirectory: string
+  private readonly duplicateBackupDirectory: string
   private index: TranscriptIndexFile | undefined
   private initialization: Promise<void> | undefined
   private legacyFallback: Map<string, TranscriptResult> | undefined
@@ -56,6 +58,7 @@ export class TranscriptStore {
   constructor(private readonly options: TranscriptStoreOptions) {
     this.indexFile = path.join(options.storeRoot, 'index.json')
     this.recordsDirectory = path.join(options.storeRoot, 'records')
+    this.duplicateBackupDirectory = path.join(options.storeRoot, 'backups', 'dedup')
   }
 
   async listSummaries(): Promise<TranscriptSummary[]> {
@@ -75,7 +78,7 @@ export class TranscriptStore {
     return records.filter((item): item is TranscriptResult => Boolean(item))
   }
 
-  async save(result: TranscriptResult): Promise<TranscriptSummary> {
+  async save(result: TranscriptResult, options: { preserveDuplicateBackup?: boolean } = {}): Promise<TranscriptSummary> {
     await this.initialize()
     await writeJsonAtomic(this.recordPath(result.id), result)
     const summary = summarizeTranscript(result)
@@ -85,6 +88,7 @@ export class TranscriptStore {
     }
     await writeJsonAtomic(this.indexFile, nextIndex)
     this.index = nextIndex
+    if (!options.preserveDuplicateBackup) await fs.rm(this.duplicateBackupPath(result.id), { force: true })
     return summary
   }
 
@@ -107,6 +111,45 @@ export class TranscriptStore {
     const updated = { ...result, fileName: trimmed }
     await this.save(updated)
     return updated
+  }
+
+  async inspectDuplicates(id: string): Promise<TranscriptDuplicateReport & { canUndo: boolean }> {
+    const result = await this.get(id)
+    if (!result) throw new Error('未找到该转写记录')
+    return {
+      ...inspectTranscriptDuplicates(result),
+      canUndo: await this.hasDuplicateBackup(id),
+    }
+  }
+
+  async repairDuplicates(id: string): Promise<TranscriptDuplicateRepair & { canUndo: boolean }> {
+    const result = await this.get(id)
+    if (!result) throw new Error('未找到该转写记录')
+    const repair = repairTranscriptDuplicates(result)
+    if (!repair.removedSegments) {
+      return { ...repair, canUndo: await this.hasDuplicateBackup(id) }
+    }
+    const backupFile = this.duplicateBackupPath(id)
+    if (!await this.hasDuplicateBackup(id)) await writeJsonAtomic(backupFile, result)
+    await this.save(repair.result, { preserveDuplicateBackup: true })
+    return { ...repair, canUndo: true }
+  }
+
+  async undoDuplicateRepair(id: string): Promise<TranscriptResult> {
+    const backupSource = await fs.readFile(this.duplicateBackupPath(id), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (!backupSource) throw new Error('没有可撤销的重复内容修复')
+    const backup = JSON.parse(backupSource) as TranscriptResult
+    if (!backup || backup.id !== id || !Array.isArray(backup.segments)) throw new Error('重复内容备份无效')
+    const current = await this.get(id)
+    const restored = {
+      ...backup,
+      revision: Math.max(current?.revision ?? 0, backup.revision ?? 0) + 1,
+    }
+    await this.save(restored)
+    return restored
   }
 
   async delete(id: string): Promise<boolean> {
@@ -188,5 +231,13 @@ export class TranscriptStore {
 
   private recordPath(id: string): string {
     return path.join(this.recordsDirectory, `${encodeURIComponent(id)}.json`)
+  }
+
+  private duplicateBackupPath(id: string): string {
+    return path.join(this.duplicateBackupDirectory, `${encodeURIComponent(id)}.json`)
+  }
+
+  private async hasDuplicateBackup(id: string): Promise<boolean> {
+    return fs.access(this.duplicateBackupPath(id), constants.F_OK).then(() => true).catch(() => false)
   }
 }

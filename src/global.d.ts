@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptResult, TranscriptSummary } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary } from '../electron/types'
 
 declare global {
   interface Window {
@@ -42,6 +42,10 @@ declare global {
       getTranscript(id: string): Promise<TranscriptResult | undefined>
       updateHistory(result: TranscriptResult): Promise<TranscriptSummary>
       patchTranscriptSegment(input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }): Promise<TranscriptSummary>
+      renameTranscript(id: string, name: string): Promise<TranscriptResult>
+      inspectTranscriptDuplicates(id: string): Promise<TranscriptDuplicateReport>
+      repairTranscriptDuplicates(id: string): Promise<TranscriptDuplicateRepairResult>
+      undoTranscriptDuplicateRepair(id: string): Promise<TranscriptResult>
       getMediaUrl(transcriptId: string): Promise<string>
       deleteHistory(id: string): Promise<boolean>
       copyText(text: string): Promise<boolean>

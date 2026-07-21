@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  collapseRepeatedTranscriptBlocks,
   HARD_CHUNK_BYTES,
   estimateTranscriptSegments,
   mergeChunkTranscripts,
@@ -67,6 +68,36 @@ describe('silence-aware chunk planning', () => {
 })
 
 describe('fuzzy transcript timing', () => {
+  it('collapses a long block repeated three times inside one API chunk', () => {
+    const block = [
+      '这是用于测试的第一句长文本，包含足够多的有效字符来避免把普通口头禅当作重复。',
+      '这是同一段中的第二句话，用于模拟接口偶尔连续返回整段相同内容的情况。',
+      '这是同一段中的最后一句，修复后整段应该只保留一份。',
+    ].join('')
+
+    const result = collapseRepeatedTranscriptBlocks(block.repeat(3))
+
+    expect(result.text).toBe(block)
+    expect(result.repeatGroups).toBe(1)
+    expect(result.removedCharacters).toBe(block.length * 2)
+  })
+
+  it('uses the collapsed chunk text when building paragraph timestamps', () => {
+    const block = '第一句包含足够多的测试文字，用于模拟接口重复返回内容。第二句继续补充上下文和必要信息。第三句结束这一段测试内容。'
+    const segments = estimateTranscriptSegments([
+      { start: 0, end: 90, text: block.repeat(3), overlapWithPrevious: 0, status: 'success' },
+    ], 90, 'long')
+
+    expect(segments.map((segment) => segment.text).join('')).toBe(block)
+  })
+
+  it('keeps short or non-adjacent repeated phrases to avoid deleting legitimate speech', () => {
+    expect(collapseRepeatedTranscriptBlocks('好的。好的。接下来继续。').text).toBe('好的。好的。接下来继续。')
+    const long = '这是一个可能在访谈开头和结尾都会自然出现的较长总结句，因此只要中间存在其他内容就不应被当成接口循环删除。'
+    const separated = `${long}中间讨论了完全不同的议题和具体执行过程。${long}`
+    expect(collapseRepeatedTranscriptBlocks(separated).text).toBe(separated)
+  })
+
   it('groups sentence-sized units into standard readable paragraphs', () => {
     const text = [
       '第一项工作已经完成需求评审并确认了交付范围。',

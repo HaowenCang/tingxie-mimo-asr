@@ -1,7 +1,14 @@
 import type { MediaAsset, MediaFolder, MediaLibrarySnapshot, MediaTranscriptStatus, TranscriptSummary } from '../../electron/types'
 
-export type MediaLibraryScope = 'all' | 'unfiled' | 'history' | string
+export type MediaLibraryScope =
+  | { kind: 'all' | 'unfiled' | 'history' }
+  | { kind: 'folder'; folderId: string }
 export type MediaLibraryStatusFilter = 'all' | MediaTranscriptStatus
+
+export function folderIdFromScope(scope: MediaLibraryScope, folders: MediaFolder[]): string | undefined {
+  if (scope.kind !== 'folder') return undefined
+  return folders.some((folder) => folder.id === scope.folderId) ? scope.folderId : undefined
+}
 
 export type MediaLibraryRow =
   | { kind: 'asset'; id: string; asset: MediaAsset }
@@ -118,17 +125,19 @@ export function filterMediaLibraryRows(
 ): MediaLibraryRow[] {
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const rows: MediaLibraryRow[] = []
+  const folderScopeId = scope.kind === 'folder' ? scope.folderId : undefined
 
-  if (scope !== 'history') {
+  if (scope.kind !== 'history') {
     for (const asset of index.library.assets) {
-      const inScope = scope === 'all' || (scope === 'unfiled' ? !asset.folderId : Boolean(asset.folderId && index.folderDescendantIds.get(scope)?.has(asset.folderId)))
+      const inScope = scope.kind === 'all'
+        || (scope.kind === 'unfiled' ? !asset.folderId : Boolean(folderScopeId && asset.folderId && index.folderDescendantIds.get(folderScopeId)?.has(asset.folderId)))
       if (!inScope || (status !== 'all' && asset.transcriptStatus !== status)) continue
       if (normalizedQuery && !index.assetSearchText.get(asset.id)?.includes(normalizedQuery)) continue
       rows.push({ kind: 'asset', id: asset.id, asset })
     }
   }
 
-  const history = scope === 'history' ? index.history : scope === 'all' ? index.unlinkedHistory : []
+  const history = scope.kind === 'history' ? index.history : scope.kind === 'all' ? index.unlinkedHistory : []
   for (const transcript of history) {
     if (status !== 'all' && transcriptStatus(transcript) !== status) continue
     if (normalizedQuery && !index.historySearchText.get(transcript.id)?.includes(normalizedQuery)) continue

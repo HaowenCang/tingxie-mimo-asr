@@ -90,7 +90,7 @@ describe('performance baseline', () => {
 
   bench('derives indexed media state for 10,000 assets', () => {
     const index = buildMediaLibraryIndex(mediaLibrary, mediaHistory)
-    filterMediaLibraryRows(index, 'all', 'all', 'recording 999')
+    filterMediaLibraryRows(index, { kind: 'all' }, 'all', 'recording 999')
   }, { iterations: 5, time: 300, warmupIterations: 2, warmupTime: 50 })
 
   bench('server-renders a virtualized 10,000 asset media library', () => {
