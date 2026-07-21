@@ -10,7 +10,7 @@
 
 ## 当前阶段
 
-阶段 5 的实现与本地验证已完成，回退基线为 `main` / `1323462`。115/115 测试、构建、生产依赖审计、性能基准和真实浏览器验收通过；首屏主 JavaScript 下降 50.97%。下一步提交、推送、创建 PR 并等待 Windows `test-and-build`，详细证据见 `docs/performance/PHASE5_AI_SEARCH_BUNDLE_GLASS.md`。
+阶段 5 的实现与本地验证已完成，回退基线为 `main` / `1323462`。实现提交 `28701cd` 已推送到 PR #9；115/115 测试、构建、生产依赖审计、性能基准和真实浏览器验收通过，首屏主 JavaScript 下降 50.97%，首轮 Windows `test-and-build` 通过（1m45s）。下一步等待状态文档提交 CI 后合并 PR #9。
 
 ## 下一次从哪里继续
 
