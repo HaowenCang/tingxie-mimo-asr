@@ -10,19 +10,19 @@
 
 ## 当前阶段
 
-阶段 5 已完成并通过 PR #9 squash merge 为 `4b6dbe9`。115/115 测试、构建、生产依赖审计、性能基准和真实浏览器验收通过；首屏主 JavaScript 下降 50.97%，最终 Windows `test-and-build` 通过（1m42s）。下一步进入“全量验证与 v0.12.0 发布”，先在独立发布分支更新版本号，再执行完整回归与 NSIS 安装包验证。
+阶段 5 已完成并通过 PR #9 squash merge 为 `4b6dbe9`。v0.12.0-rc.1 的本机 115/115 测试、生产依赖审计、NSIS、隔离用户目录的解包成品启动和浏览器回归均已通过；安装包 SHA-256 已记录。下一步提交发布分支并等待 PR/Windows CI，随后创建 RC 标签和 prerelease。详细状态见 `docs/performance/RELEASE_V0.12.0.md`。
 
 ## 下一次从哪里继续
 
-下一次会话从 `docs/PERFORMANCE_OPTIMIZATION_PLAN.md` 的“阶段 5：AI、搜索、启动包与 Liquid Glass”开始：
+若中途暂停，下一次会话从 `docs/performance/RELEASE_V0.12.0.md` 的首个未完成项继续：
 
 ```powershell
 git switch main
 git pull --ff-only origin main
-git switch -c codex/perf-bundle-and-glass
+git switch codex/release-v0.12.0-rc1
 ```
 
-先将阶段 5 标记为进行中，再按 TDD 和浏览器验收流程执行。阶段 5 完成前不要升级版本号或构建安装包。
+先确认工作区与远端分支状态，再继续 RC 验证；RC 通过前不创建正式 `v0.12.0` 标签。
 
 ## 重要约束
 
