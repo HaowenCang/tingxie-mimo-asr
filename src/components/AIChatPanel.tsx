@@ -1,7 +1,9 @@
 import { AlertTriangle, Bot, Check, Copy, LoaderCircle, RefreshCw, Send, Settings2, Square, Trash2, X } from 'lucide-react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { AIChatSession, AIMessage, AISettings, AIStreamEvent, TranscriptResult } from '../../electron/types'
-import { MarkdownMessage } from './MarkdownMessage'
+import { isNearConversationBottom, shouldRenderMessageMarkdown, visibleAIMessageWindow } from './ai-chat-view-model'
+
+const MarkdownMessage = lazy(() => import('./MarkdownMessage').then((module) => ({ default: module.MarkdownMessage })))
 
 interface AIChatPanelProps {
   transcript: TranscriptResult
@@ -31,14 +33,19 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
   const [showTokenPlanWarning, setShowTokenPlanWarning] = useState(false)
   const [pending, setPending] = useState<{ mode: 'new' | 'regenerate'; message?: string } | null>(null)
   const [copiedId, setCopiedId] = useState('')
+  const [showAllMessages, setShowAllMessages] = useState(false)
   const activeRequestIdRef = useRef('')
   const deltaBufferRef = useRef('')
   const frameRef = useRef<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const provider = settings.providers.find((item) => item.id === settings.selectedProviderId) || settings.providers[0]
+  const visibleMessages = useMemo(() => visibleAIMessageWindow(session.messages, showAllMessages), [session.messages, showAllMessages])
 
   useEffect(() => {
     let active = true
+    setShowAllMessages(false)
+    stickToBottomRef.current = true
     setLoadingSession(true)
     setError('')
     if (!window.tingxie) {
@@ -75,7 +82,7 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
   }, [transcript.id])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' })
+    if (stickToBottomRef.current) messagesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [session.messages])
 
   useEffect(() => () => {
@@ -117,6 +124,7 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
     activeRequestIdRef.current = requestId
     deltaBufferRef.current = ''
     setLoading(true)
+    stickToBottomRef.current = true
     setError('')
     setSession((current) => ({ ...current, messages: optimisticMessages(current.messages, mode, message) }))
     if (mode === 'new') setInput('')
@@ -202,17 +210,19 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
       <button aria-label="清空 AI 对话" disabled={loading || session.messages.length === 0} onClick={clearChat}><Trash2 size={15} /></button>
     </div>
 
-    <div className="ai-messages">
+    <div className="ai-messages" onScroll={(event) => { stickToBottomRef.current = isNearConversationBottom(event.currentTarget) }}>
       {loadingSession ? <div className="ai-loading"><LoaderCircle className="spin" size={19} />正在读取对话</div> : session.messages.length === 0 ? <div className="ai-empty">
         <span><Bot size={24} /></span><h3>询问这份转写</h3><p>可以总结内容、解释录音中提到的概念，或帮助梳理逻辑链路。</p>
         <div>{['总结核心观点', '提取行动项', '解释录音中的关键概念'].map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>
-      </div> : session.messages.map((message) => <article key={message.id} className={`ai-message ${message.role}`}>
+      </div> : <>{visibleMessages.hiddenCount > 0 && <button className="ai-history-expand" onClick={() => setShowAllMessages(true)}>显示更早的 {visibleMessages.hiddenCount} 条消息</button>}{visibleMessages.messages.map((message) => <article key={message.id} className={`ai-message ${message.role}`}>
         <div className="ai-message-role">{message.role === 'user' ? '你' : 'AI'}</div>
         <div className="ai-message-content">{message.content
-          ? message.role === 'assistant' ? <MarkdownMessage content={message.content} /> : message.content
+          ? shouldRenderMessageMarkdown(message)
+            ? <Suspense fallback={<span className="ai-markdown-loading">正在排版…</span>}><MarkdownMessage content={message.content} /></Suspense>
+            : message.role === 'assistant' ? <span className="ai-stream-preview">{message.content}</span> : message.content
           : message.id === 'streaming' ? <span className="typing-indicator"><i /><i /><i /></span> : ''}</div>
         {message.role === 'assistant' && message.content && <button className="ai-message-copy" aria-label="复制 AI 回答" onClick={() => copyMessage(message)}>{copiedId === message.id ? <Check size={13} /> : <Copy size={13} />}</button>}
-      </article>)}
+      </article>)}</>}
       <div ref={messagesEndRef} />
     </div>
 

@@ -1,6 +1,6 @@
 # 性能优化续作日志
 
-最后更新：2026-07-19（Asia/Shanghai）
+最后更新：2026-07-21（Asia/Shanghai）
 
 ## 当前稳定基线
 
@@ -10,7 +10,7 @@
 
 ## 当前阶段
 
-阶段 4 已完成：111 项测试、生产构建、依赖审计、性能基准、真实浏览器验收，以及 PR #8 的实现与状态提交 Windows CI 均通过。详细证据见 `docs/performance/PHASE4_MEDIA_LIBRARY.md`。
+阶段 5 的实现与本地验证已完成，回退基线为 `main` / `1323462`。115/115 测试、构建、生产依赖审计、性能基准和真实浏览器验收通过；首屏主 JavaScript 下降 50.97%。下一步提交、推送、创建 PR 并等待 Windows `test-and-build`，详细证据见 `docs/performance/PHASE5_AI_SEARCH_BUNDLE_GLASS.md`。
 
 ## 下一次从哪里继续
 

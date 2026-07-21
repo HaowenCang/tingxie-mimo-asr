@@ -6,7 +6,9 @@ import { formatDuration } from '../utils'
 import { AudioPlayer } from './AudioPlayer'
 import { EditableTranscriptSegment } from './EditableTranscriptSegment'
 import { findActiveTranscriptSegment } from './playback-timeline'
-import { findTranscriptMatches, type TranscriptMatch } from './searchTranscript'
+import { findTranscriptMatches, updateTranscriptSearchIndex, type TranscriptMatch, type TranscriptSearchIndex } from './searchTranscript'
+
+const MAX_VISIBLE_SEARCH_RESULTS = 100
 
 interface TranscriptDetailProps {
   result: TranscriptResult
@@ -53,8 +55,15 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
   const timelineRef = useRef<HTMLDivElement>(null)
   const playbackTimeRef = useRef(0)
   const jumpHighlightTimer = useRef<number | undefined>(undefined)
+  const searchIndexRef = useRef<TranscriptSearchIndex | undefined>(undefined)
   const chapterBySegment = useMemo(() => new Map(result.analysis?.chapters.map((chapter) => [chapter.startSegmentId, chapter]) || []), [result.analysis])
-  const searchMatches = useMemo(() => findTranscriptMatches(result.segments, deferredQuery), [result.segments, deferredQuery])
+  const searchIndex = useMemo(() => {
+    const next = updateTranscriptSearchIndex(searchIndexRef.current, result.segments)
+    searchIndexRef.current = next
+    return next
+  }, [result.segments])
+  const searchMatches = useMemo(() => findTranscriptMatches(result.segments, deferredQuery, searchIndex), [result.segments, deferredQuery, searchIndex])
+  const visibleSearchMatches = searchMatches.slice(0, MAX_VISIBLE_SEARCH_RESULTS)
   const matchingSegmentIndexes = useMemo(() => new Set(searchMatches.map((match) => match.segmentIndex)), [searchMatches])
   const rowVirtualizer = useVirtualizer({
     count: result.segments.length,
@@ -144,7 +153,7 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
 
   const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>, persist = true) => {
     const segments = result.segments.map((segment, segmentIndex) => segmentIndex === index ? { ...segment, ...patch } : segment)
-    onChange({ ...result, segments, text: transcriptText(segments) }, persist)
+    onChange({ ...result, revision: (result.revision ?? 0) + 1, segments, text: transcriptText(segments) }, persist)
   }, [result, onChange])
 
   const commitSegmentText = useCallback((index: number, text: string) => {
@@ -176,7 +185,7 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
         <header><div><FileText size={18} /><h2>原文</h2></div><span>点击 ≈ 时间可播放核对 · 可直接编辑</span></header>
         {query.trim() && <aside className={`transcript-search-results${searchMatches.length ? '' : ' empty'}`} aria-live="polite">
           <div className="search-results-heading"><div><Search size={16} /><strong>{searchMatches.length ? `找到 ${searchMatches.length} 处结果` : '没有找到匹配内容'}</strong></div>{searchMatches.length > 0 && <span><button aria-label="上一个结果" onClick={() => jumpToMatch(activeMatch - 1)}><ChevronLeft size={15} /></button><button aria-label="下一个结果" onClick={() => jumpToMatch(activeMatch + 1)}><ChevronRight size={15} /></button></span>}</div>
-          {searchMatches.length ? <div className="search-result-list">{searchMatches.map((match, index) => <button key={match.id} className={activeMatch === index ? 'active' : ''} onClick={() => jumpToMatch(index)}><time>≈ {formatDuration(result.segments[match.segmentIndex].start)}</time><span><MarkedExcerpt match={match} /></span></button>)}</div> : <p>请检查关键词，或尝试更短、更常见的词语。</p>}
+          {searchMatches.length ? <><div className="search-result-list">{visibleSearchMatches.map((match, index) => <button key={match.id} className={activeMatch === index ? 'active' : ''} onClick={() => jumpToMatch(index)}><time>≈ {formatDuration(result.segments[match.segmentIndex].start)}</time><span><MarkedExcerpt match={match} /></span></button>)}</div>{searchMatches.length > MAX_VISIBLE_SEARCH_RESULTS && <p className="search-result-limit">结果较多，列表仅显示前 {MAX_VISIBLE_SEARCH_RESULTS} 项；可继续使用上一项/下一项浏览全部结果。</p>}</> : <p>请检查关键词，或尝试更短、更常见的词语。</p>}
         </aside>}
         {result.failedSegmentCount ? <div className="transcript-warning"><AlertTriangle size={16} />{result.failedSegmentCount} 个切片重试后仍失败，已保留原时间缺口。</div> : null}
         <div ref={timelineRef} className="timeline" data-virtualized="true" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
