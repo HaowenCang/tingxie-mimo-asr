@@ -22,6 +22,14 @@
 - [ ] 标签触发的 Windows Release Candidate 工作流通过。
 - [ ] 创建 GitHub prerelease，附安装包、SHA-256、性能报告、迁移和回退说明。
 
+## RC 工作流诊断
+
+- 首次标签运行 `29834132987` 在 NSIS 和 blockmap 已生成后失败。
+- 根因：electron-builder 检测到 tag 后自动尝试发布，但 runner 未配置 GitHub Personal Access Token。
+- 修复：工作流显式使用 `npm run dist -- --publish never`，将构建与发布职责分离；安装包只由 artifact 步骤收集，Release 后续由受控命令创建。
+- 本机已使用完全相同的 `npm run dist -- --publish never` 命令复验成功。
+- 失败标签已在确认不存在 GitHub Release 后删除；修复 PR 合并前不会重建标签。
+
 ## 发布边界
 
 - RC 阶段不修改真实用户历史、媒体库、聊天或设置。

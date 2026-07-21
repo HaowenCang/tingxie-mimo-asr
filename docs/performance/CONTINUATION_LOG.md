@@ -10,7 +10,7 @@
 
 ## 当前阶段
 
-阶段 5 已完成并通过 PR #9 squash merge 为 `4b6dbe9`。v0.12.0-rc.1 的本机 115/115 测试、生产依赖审计、NSIS、隔离用户目录的解包成品启动和浏览器回归均已通过；安装包 SHA-256 已记录。下一步提交发布分支并等待 PR/Windows CI，随后创建 RC 标签和 prerelease。详细状态见 `docs/performance/RELEASE_V0.12.0.md`。
+阶段 5 已完成并通过 PR #9 squash merge 为 `4b6dbe9`。v0.12.0-rc.1 本机验证和 PR #11 已通过。首次标签工作流在 NSIS 生成后因 electron-builder 自动发布缺少令牌而失败；失败标签已删除，当前在 `codex/fix-release-workflow` 通过 `--publish never` 分离构建与发布。修复合并前不会重建标签。详细状态见 `docs/performance/RELEASE_V0.12.0.md`。
 
 ## 下一次从哪里继续
 
