@@ -80,4 +80,27 @@ describe('legacy transcript recovery', () => {
     expect(markup).toContain('正在复制媒体 25/100')
     expect(markup).toContain('<progress')
   })
+
+  it('renders nested folders with explicit management controls', () => {
+    const markup = renderToStaticMarkup(<MediaLibraryView
+      library={{
+        rootPath: 'D:\\library',
+        folders: [
+          { id: 'parent', name: '项目资料', createdAt: 'now', updatedAt: 'now' },
+          { id: 'child', parentId: 'parent', name: '访谈录音', createdAt: 'now', updatedAt: 'now' },
+        ],
+        assets: [],
+      }}
+      history={[]}
+      onLibraryChange={() => undefined}
+      onOpenTranscript={() => undefined}
+      onTranscribe={() => undefined}
+      onImportFiles={() => undefined}
+      onImportFolder={() => undefined}
+    />)
+
+    expect(markup).toContain('data-folder-depth="1"')
+    expect(markup).toContain('项目资料 文件夹操作')
+    expect(markup).toContain('访谈录音 文件夹操作')
+  })
 })

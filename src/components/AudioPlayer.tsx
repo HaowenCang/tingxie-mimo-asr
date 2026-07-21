@@ -2,6 +2,9 @@ import { Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
+import { GlassSelect } from './GlassSelect'
+
+const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 2].map((value) => ({ value: String(value), label: `${value}x` }))
 
 interface AudioPlayerProps {
   transcript: TranscriptResult
@@ -101,7 +104,7 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
       <WaveformBars heights={waveform} />
     </button>
     <span className="player-time">{formatDuration(duration)}</span>
-    <label className="player-rate"><span>倍速</span><select aria-label="播放速度" value={rate} onChange={(event) => setRate(Number(event.target.value))}>{[0.75, 1, 1.25, 1.5, 2].map((value) => <option key={value} value={value}>{value}x</option>)}</select></label>
+    <label className="player-rate"><span>倍速</span><GlassSelect ariaLabel="播放速度" value={String(rate)} onValueChange={(value) => setRate(Number(value))} options={PLAYBACK_RATE_OPTIONS} size="compact" /></label>
     <button className="volume-button" aria-label={muted ? '取消静音' : '静音'} onClick={() => setMuted((value) => !value)}>{muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
     <input className="volume-slider" aria-label="音量" type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
     <span className={`skip-badge ${preferences.skipSilence ? 'active' : ''}`}>跳过静音 {preferences.skipSilence ? '开' : '关'}</span>

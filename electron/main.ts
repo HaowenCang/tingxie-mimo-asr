@@ -55,9 +55,11 @@ import { TranscriptStore } from './transcript-store'
 import { summarizeTranscript } from './transcript-summary'
 import {
   createMediaFolder,
+  deleteMediaFolder,
   importMediaAssets,
   linkTranscriptToAsset,
   moveMediaAssets,
+  moveMediaFolder,
   renameMediaAsset,
   renameMediaFolder,
   resolveManagedMediaPath,
@@ -1184,10 +1186,10 @@ app.whenReady().then(async () => {
     return { library: publicMediaLibrary(settings, next), importedIds: result.imported.map((asset) => asset.id), duplicateIds: result.duplicates.map((asset) => asset.id) }
   })
 
-  ipcMain.handle('library:create-folder', async (_event, name: string): Promise<MediaLibrarySnapshot> => {
+  ipcMain.handle('library:create-folder', async (_event, input: { name: string; parentId?: string }): Promise<MediaLibrarySnapshot> => {
     const settings = await readCachedSettings()
     const timestamp = new Date().toISOString()
-    const next = createMediaFolder(await readMediaLibrary(settings), { id: randomUUID(), name, createdAt: timestamp, updatedAt: timestamp })
+    const next = createMediaFolder(await readMediaLibrary(settings), { id: randomUUID(), name: input.name, ...(input.parentId ? { parentId: input.parentId } : {}), createdAt: timestamp, updatedAt: timestamp })
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
@@ -1201,9 +1203,38 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('library:rename-asset', async (_event, input: { id: string; name: string }): Promise<MediaLibrarySnapshot> => {
     const settings = await readCachedSettings()
-    const next = renameMediaAsset(await readMediaLibrary(settings), input.id, input.name, new Date().toISOString())
+    const current = await readMediaLibrary(settings)
+    const asset = current.assets.find((item) => item.id === input.id)
+    const next = renameMediaAsset(current, input.id, input.name, new Date().toISOString())
+    await writeMediaLibrary(settings, next)
+    if (asset?.transcriptId) {
+      try {
+        await getTranscriptStore().rename(asset.transcriptId, input.name)
+      } catch (error) {
+        await writeMediaLibrary(settings, current)
+        throw error
+      }
+    }
+    return publicMediaLibrary(settings, next)
+  })
+
+  ipcMain.handle('library:move-folder', async (_event, input: { id: string; parentId?: string }): Promise<MediaLibrarySnapshot> => {
+    const settings = await readCachedSettings()
+    const next = moveMediaFolder(await readMediaLibrary(settings), input.id, input.parentId, new Date().toISOString())
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
+  })
+
+  ipcMain.handle('library:delete-folder', async (_event, input: { id: string; mode: 'preserve-content' | 'delete-media' }): Promise<MediaLibrarySnapshot> => {
+    const settings = await readCachedSettings()
+    const result = deleteMediaFolder(await readMediaLibrary(settings), input.id, input.mode, new Date().toISOString())
+    await writeMediaLibrary(settings, result.index)
+    if (input.mode === 'delete-media') {
+      const cleanup = await Promise.allSettled(result.deletedAssets.map((asset) => fs.rm(resolveManagedMediaPath(mediaLibraryRoot(settings), asset), { force: true })))
+      const failedCleanupCount = cleanup.filter((item) => item.status === 'rejected').length
+      if (failedCleanupCount) logDiagnostic('library_folder_cleanup_failed', { folderId: input.id, failedCleanupCount })
+    }
+    return publicMediaLibrary(settings, result.index)
   })
 
   ipcMain.handle('library:move-assets', async (_event, input: { ids: string[]; folderId?: string }): Promise<MediaLibrarySnapshot> => {

@@ -11,8 +11,10 @@ declare global {
       importMedia(sources: SelectedMedia[], folderId?: string): Promise<MediaImportResult>
       importMediaFolder(folderId?: string): Promise<MediaImportResult | undefined>
       onMediaImportProgress(callback: (event: MediaImportProgress) => void): () => void
-      createMediaFolder(name: string): Promise<MediaLibrarySnapshot>
+      createMediaFolder(name: string, parentId?: string): Promise<MediaLibrarySnapshot>
       renameMediaFolder(id: string, name: string): Promise<MediaLibrarySnapshot>
+      moveMediaFolder(id: string, parentId?: string): Promise<MediaLibrarySnapshot>
+      deleteMediaFolder(id: string, mode: 'preserve-content' | 'delete-media'): Promise<MediaLibrarySnapshot>
       renameMediaAsset(id: string, name: string): Promise<MediaLibrarySnapshot>
       moveMediaAssets(ids: string[], folderId?: string): Promise<MediaLibrarySnapshot>
       deleteMediaAssets(ids: string[]): Promise<MediaLibrarySnapshot>

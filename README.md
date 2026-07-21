@@ -15,6 +15,9 @@
 - AI 对话原生支持小米按量 API、Token Plan、`mimo-v2.5` 和 `mimo-v2.5-pro`，并支持多个 OpenAI Chat Completions 兼容 Provider。
 - 可分别配置 AI Provider 的 Base URL、Model ID、上下文长度、最大输出 Token 和系统提示词；API Key 均使用 Windows 安全存储加密。
 - 支持队列进度、取消、重试、历史记录、结果编辑、复制和 TXT/Markdown 导出。
+- 媒体库支持多级文件夹、拖放整理、文件夹重命名/移动/安全删除，以及录音显示名称与关联转写标题同步修改。
+- 新建转写页面使用全宽工作区；转写完成后直接进入结果详情，队列长进度会换行、自动跟随并可展开查看。
+- 全应用下拉控件使用可键盘操作的 Liquid Glass 组件，并适配深色、减少透明度和高对比度模式。
 - API Key 使用 Electron `safeStorage` 调用 Windows 安全存储加密，仅由主进程解密。
 
 ## 使用
