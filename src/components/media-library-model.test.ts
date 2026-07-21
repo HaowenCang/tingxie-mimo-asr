@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaAsset, MediaLibrarySnapshot, TranscriptSummary } from '../../electron/types'
-import { buildMediaLibraryIndex, filterMediaLibraryRows } from './media-library-model'
+import { buildMediaLibraryIndex, filterMediaLibraryRows, visibleMediaFolderTree } from './media-library-model'
 
 function asset(index: number, folderId?: string): MediaAsset {
   return {
@@ -55,5 +55,38 @@ describe('media library derived index', () => {
 
     expect(filterMediaLibraryRows(index, 'all', 'all', 'recording 2').map((row) => row.id)).toEqual(['asset-2'])
     expect(filterMediaLibraryRows(index, 'history', 'all', 'preview 1').map((row) => row.id)).toEqual(['transcript-1'])
+  })
+
+  it('flattens expanded nested folders with stable depth and breadcrumb paths', () => {
+    const folders = [
+      { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' },
+      { id: 'child', name: 'Child', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+      { id: 'grandchild', name: 'Grandchild', parentId: 'child', createdAt: 'now', updatedAt: 'now' },
+      { id: 'other', name: 'Other', createdAt: 'now', updatedAt: 'now' },
+    ]
+
+    expect(visibleMediaFolderTree(folders, new Set(['parent', 'child'])).map((node) => [node.folder.id, node.depth, node.path])).toEqual([
+      ['parent', 0, 'Parent'],
+      ['child', 1, 'Parent / Child'],
+      ['grandchild', 2, 'Parent / Child / Grandchild'],
+      ['other', 0, 'Other'],
+    ])
+    expect(visibleMediaFolderTree(folders, new Set()).map((node) => node.folder.id)).toEqual(['parent', 'other'])
+  })
+
+  it('includes descendant media in parent folder counts', () => {
+    const library: MediaLibrarySnapshot = {
+      rootPath: 'D:/library',
+      folders: [
+        { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'child', name: 'Child', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+      ],
+      assets: [asset(1, 'parent'), asset(2, 'child')],
+    }
+
+    const index = buildMediaLibraryIndex(library, [])
+    expect(index.folderCounts.get('parent')).toBe(2)
+    expect(index.folderCounts.get('child')).toBe(1)
+    expect(filterMediaLibraryRows(index, 'parent', 'all', '').map((row) => row.id)).toEqual(['asset-1', 'asset-2'])
   })
 })

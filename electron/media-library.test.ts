@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createMediaFolder, importMediaAssets, moveMediaAssets, renameMediaAsset, type MediaLibraryIndex } from './media-library'
+import { createMediaFolder, deleteMediaFolder, importMediaAssets, moveMediaAssets, moveMediaFolder, renameMediaAsset, type MediaLibraryIndex } from './media-library'
 
 const tempDirs: string[] = []
 
@@ -55,6 +55,75 @@ describe('managed media library', () => {
       ['项目周会', 'meetings', 'media/a.m4a'],
       ['B.m4a', 'meetings', 'media/b.m4a'],
     ])
+  })
+
+  it('supports nested folders while preventing a folder from moving into its own descendant', () => {
+    const initial: MediaLibraryIndex = { version: 1, folders: [], assets: [] }
+    const parent = createMediaFolder(initial, { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' })
+    const nested = createMediaFolder(parent, { id: 'child', name: 'Child', parentId: 'parent', createdAt: 'now', updatedAt: 'now' })
+
+    expect(() => moveMediaFolder(nested, 'parent', 'child', 'later')).toThrow(/后代|descendant/i)
+    expect(moveMediaFolder(nested, 'child', undefined, 'later').folders.find((folder) => folder.id === 'child')?.parentId).toBeUndefined()
+  })
+
+  it('deletes a folder safely by moving its direct contents to the parent', () => {
+    const index: MediaLibraryIndex = {
+      version: 1,
+      folders: [
+        { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'deleted', name: 'Deleted', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'child', name: 'Child', parentId: 'deleted', createdAt: 'now', updatedAt: 'now' },
+      ],
+      assets: [{
+        id: 'asset', displayName: 'Audio.m4a', originalName: 'Audio.m4a', relativePath: 'media/asset.m4a', size: 1,
+        extension: 'M4A', folderId: 'deleted', transcriptStatus: 'transcribed', managed: true, importedAt: 'now', updatedAt: 'now',
+      }],
+    }
+
+    const result = deleteMediaFolder(index, 'deleted', 'preserve-content', 'later')
+
+    expect(result.deletedAssets).toEqual([])
+    expect(result.index.folders.map((folder) => [folder.id, folder.parentId])).toEqual([
+      ['parent', undefined],
+      ['child', 'parent'],
+    ])
+    expect(result.index.assets[0].folderId).toBe('parent')
+  })
+
+  it('refuses a preserve-content delete that would create duplicate sibling names', () => {
+    const index: MediaLibraryIndex = {
+      version: 1,
+      folders: [
+        { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'target', name: 'Target', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'existing', name: 'Archive', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'child', name: 'Archive', parentId: 'target', createdAt: 'now', updatedAt: 'now' },
+      ],
+      assets: [],
+    }
+
+    expect(() => deleteMediaFolder(index, 'target', 'preserve-content', 'later')).toThrow('同名')
+  })
+
+  it('recursively removes descendant folders and returns their media for explicit deletion', () => {
+    const index: MediaLibraryIndex = {
+      version: 1,
+      folders: [
+        { id: 'kept', name: 'Kept', createdAt: 'now', updatedAt: 'now' },
+        { id: 'deleted', name: 'Deleted', createdAt: 'now', updatedAt: 'now' },
+        { id: 'child', name: 'Child', parentId: 'deleted', createdAt: 'now', updatedAt: 'now' },
+      ],
+      assets: [
+        { id: 'kept-asset', displayName: 'Kept.m4a', originalName: 'Kept.m4a', relativePath: 'media/kept.m4a', size: 1, extension: 'M4A', folderId: 'kept', transcriptStatus: 'transcribed', managed: true, importedAt: 'now', updatedAt: 'now' },
+        { id: 'deleted-asset', displayName: 'Deleted.m4a', originalName: 'Deleted.m4a', relativePath: 'media/deleted.m4a', size: 1, extension: 'M4A', folderId: 'child', transcriptStatus: 'transcribed', managed: true, importedAt: 'now', updatedAt: 'now' },
+      ],
+    }
+
+    const result = deleteMediaFolder(index, 'deleted', 'delete-media', 'later')
+
+    expect(result.index.folders.map((folder) => folder.id)).toEqual(['kept'])
+    expect(result.index.assets.map((asset) => asset.id)).toEqual(['kept-asset'])
+    expect(result.deletedAssets.map((asset) => asset.id)).toEqual(['deleted-asset'])
   })
 
   it('deduplicates a large import batch by a stable source signature', async () => {

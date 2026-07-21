@@ -157,6 +157,91 @@ export function renameMediaFolder(index: MediaLibraryIndex, id: string, name: st
   return { ...index, folders: index.folders.map((item) => item.id === id ? { ...item, name: trimmed, updatedAt } : item) }
 }
 
+export function mediaFolderDescendantIds(index: MediaLibraryIndex, folderId: string): Set<string> {
+  const descendants = new Set<string>()
+  const pending = [folderId]
+  while (pending.length) {
+    const parentId = pending.pop()!
+    for (const folder of index.folders) {
+      if (folder.parentId !== parentId || descendants.has(folder.id)) continue
+      descendants.add(folder.id)
+      pending.push(folder.id)
+    }
+  }
+  return descendants
+}
+
+export function moveMediaFolder(
+  index: MediaLibraryIndex,
+  id: string,
+  parentId: string | undefined,
+  updatedAt: string,
+): MediaLibraryIndex {
+  const folder = index.folders.find((item) => item.id === id)
+  if (!folder) throw new Error('文件夹不存在')
+  if (parentId && !index.folders.some((item) => item.id === parentId)) throw new Error('目标文件夹不存在')
+  if (parentId === id || (parentId && mediaFolderDescendantIds(index, id).has(parentId))) {
+    throw new Error('不能将文件夹移动到自身或后代文件夹')
+  }
+  if (index.folders.some((item) => item.id !== id && item.parentId === parentId && item.name.toLocaleLowerCase() === folder.name.toLocaleLowerCase())) {
+    throw new Error('目标位置已有同名文件夹')
+  }
+  return {
+    ...index,
+    folders: index.folders.map((item) => item.id === id
+      ? { ...item, ...(parentId ? { parentId } : { parentId: undefined }), updatedAt }
+      : item),
+  }
+}
+
+export interface DeleteMediaFolderResult {
+  index: MediaLibraryIndex
+  deletedAssets: MediaAsset[]
+}
+
+export function deleteMediaFolder(
+  index: MediaLibraryIndex,
+  id: string,
+  mode: 'preserve-content' | 'delete-media',
+  updatedAt: string,
+): DeleteMediaFolderResult {
+  const folder = index.folders.find((item) => item.id === id)
+  if (!folder) throw new Error('文件夹不存在')
+  if (mode === 'delete-media') {
+    const removedFolderIds = mediaFolderDescendantIds(index, id)
+    removedFolderIds.add(id)
+    const deletedAssets = index.assets.filter((asset) => Boolean(asset.folderId && removedFolderIds.has(asset.folderId)))
+    const deletedAssetIds = new Set(deletedAssets.map((asset) => asset.id))
+    return {
+      deletedAssets,
+      index: {
+        ...index,
+        folders: index.folders.filter((item) => !removedFolderIds.has(item.id)),
+        assets: index.assets.filter((asset) => !deletedAssetIds.has(asset.id)),
+      },
+    }
+  }
+  const directChildren = index.folders.filter((item) => item.parentId === id)
+  const destinationSiblings = index.folders.filter((item) => item.id !== id && item.parentId === folder.parentId)
+  if (directChildren.some((child) => destinationSiblings.some((sibling) => sibling.name.toLocaleLowerCase() === child.name.toLocaleLowerCase()))) {
+    throw new Error('上一级已有同名文件夹，请先重命名或移动子文件夹')
+  }
+  return {
+    deletedAssets: [],
+    index: {
+      ...index,
+      folders: index.folders
+        .filter((item) => item.id !== id)
+        .map((item) => item.parentId === id
+          ? { ...item, ...(folder.parentId ? { parentId: folder.parentId } : { parentId: undefined }), updatedAt }
+          : item),
+      assets: index.assets.map((asset) => asset.folderId === id
+        ? { ...asset, ...(folder.parentId ? { folderId: folder.parentId } : { folderId: undefined }), updatedAt }
+        : asset),
+    },
+  }
+}
+
 export function renameMediaAsset(index: MediaLibraryIndex, id: string, displayName: string, updatedAt: string): MediaLibraryIndex {
   const trimmed = displayName.trim()
   if (!trimmed) throw new Error('录音名称不能为空')

@@ -6,7 +6,6 @@ import { summarizeTranscript } from '../electron/transcript-summary'
 import { QueuePanel } from './components/QueuePanel'
 import { clampChatPanelWidth, DEFAULT_CHAT_PANEL_WIDTH, PanelResizeHandle } from './components/PanelResizeHandle'
 import { Sidebar } from './components/Sidebar'
-import { TranscriptPanel } from './components/TranscriptPanel'
 import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
@@ -26,6 +25,8 @@ const demoParameters = new URLSearchParams(location.search)
 const isDemo = import.meta.env.DEV && demoParameters.has('demo')
 const isLongDemo = isDemo && demoParameters.has('long')
 const isLargeMediaDemo = isDemo && demoParameters.has('large-library')
+const isEmptyWorkspaceDemo = isDemo && demoParameters.has('empty-workspace')
+const isQueueOverflowDemo = isDemo && demoParameters.has('queue-overflow')
 const demoLongText = '这是用于验证超长转写排版的演示文本，每一句都应连续排列，不应在下一个时间段之前留下大段空白。'.repeat(260)
 
 const demoSegments: TranscriptResult['segments'] = isLongDemo ? [
@@ -61,9 +62,10 @@ const demoResult: TranscriptResult = {
 }
 
 const demoFiles: QueueFile[] = [
-  { id: 'demo-1', path: '', name: '产品周会.mp4', size: 1_331_433_472, duration: 4365, status: isLongDemo ? 'partial' : 'extracting', progress: isLongDemo ? 100 : 42, detail: isLongDemo ? '转写完成，1 个片段失败' : '正在提取音频 42%', result: demoResult },
+  { id: 'demo-1', path: '', name: '产品周会.mp4', size: 1_331_433_472, duration: 4365, status: isLongDemo ? 'partial' : 'extracting', progress: isLongDemo ? 100 : 42, detail: isLongDemo ? '转写完成，1 个片段失败' : isQueueOverflowDemo ? '正在识别较长音频的第 18 个片段，服务返回了需要等待后重试的详细进度信息；此内容应当自动换行，并可在较小窗口中完整查看。' : '正在提取音频 42%', result: demoResult },
   { id: 'demo-2', path: '', name: '项目复盘.wav', size: 818_518_426, duration: 2912, status: 'waiting', progress: 0 },
   { id: 'demo-3', path: '', name: '客户访谈.mp3', size: 34_812_928, duration: 2178, status: 'done', progress: 100, result: { ...demoResult, id: 'demo-3', fileName: '客户访谈.mp3' } },
+  ...(isQueueOverflowDemo ? Array.from({ length: 12 }, (_, index): QueueFile => ({ id: `queue-demo-${index}`, path: '', name: `批量访谈录音 ${index + 1}.m4a`, size: 22_000_000 + index, duration: 1200 + index * 30, status: 'waiting', progress: 0 })) : []),
 ]
 
 const demoHistory = demoFiles.flatMap((file) => file.result ? [summarizeTranscript(file.result)] : [])
@@ -80,7 +82,11 @@ const initialAISettings: AISettings = {
 
 const demoLibrary: MediaLibrarySnapshot = {
   rootPath: 'D:\\听写媒体库',
-  folders: [{ id: 'folder-meetings', name: '会议记录', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+  folders: [
+    { id: 'folder-meetings', name: '会议记录', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'folder-project', name: '产品项目', parentId: 'folder-meetings', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'folder-interviews', name: '客户访谈', parentId: 'folder-project', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  ],
   assets: (isLargeMediaDemo ? Array.from({ length: 10_000 }, (_, index): QueueFile => ({
     id: `large-${index}`,
     path: '',
@@ -97,7 +103,7 @@ const demoLibrary: MediaLibrarySnapshot = {
     size: file.size,
     extension: file.name.split('.').at(-1)?.toLocaleUpperCase() || 'AUDIO',
     duration: file.duration,
-    folderId: index < 2 ? 'folder-meetings' : undefined,
+    folderId: index === 0 ? 'folder-project' : index === 1 ? 'folder-interviews' : undefined,
     transcriptId: file.result?.id,
     transcriptStatus: file.status === 'done' ? 'transcribed' : file.status === 'partial' ? 'partial' : 'untranscribed',
     managed: true,
@@ -109,7 +115,7 @@ const demoLibrary: MediaLibrarySnapshot = {
 export function App() {
   const [currentPage, setCurrentPage] = useState<'new' | 'library'>('new')
   const [files, setFiles] = useState<QueueFile[]>(isDemo ? demoFiles : [])
-  const [selectedResult, setSelectedResult] = useState<TranscriptResult | undefined>(isDemo ? demoResult : undefined)
+  const [selectedResult, setSelectedResult] = useState<TranscriptResult | undefined>(isDemo && !isEmptyWorkspaceDemo ? demoResult : undefined)
   const [settings, setSettings] = useState<AppSettings>({ hasApiKey: isDemo, language: 'auto', serviceMode: 'payg', configuredServices: isDemo ? ['payg'] : [], adaptiveConcurrency: true, preferences: DEFAULT_APP_PREFERENCES, mediaLibraryRoot: demoLibrary.rootPath })
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibrarySnapshot>(isDemo ? demoLibrary : { rootPath: '', folders: [], assets: [] })
   const [mediaImportProgress, setMediaImportProgress] = useState<MediaImportProgress>()
@@ -406,13 +412,14 @@ export function App() {
   return (
     <div
       ref={shellRef}
-      className={`${chatOpen && selectedResult && currentPage === 'new' ? 'app-shell chat-open' : 'app-shell'}${selectedResult && currentPage === 'new' ? ' detail-open' : ''}${settings.preferences.sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`}
+      className={`${chatOpen && selectedResult && currentPage === 'new' ? 'app-shell chat-open' : 'app-shell'}${selectedResult && currentPage === 'new' ? ' detail-open' : ''}${currentPage === 'new' && !selectedResult ? ' new-transcript-mode' : ''}${settings.preferences.sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`}
       style={{ '--chat-panel-width': `${chatPanelWidth}px` } as CSSProperties}
     >
       <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} />
       {currentPage === 'library' ? <Suspense fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
         library={mediaLibrary}
         history={history}
+        onHistoryChange={setHistory}
         importProgress={mediaImportProgress}
         onLibraryChange={setMediaLibrary}
         onOpenTranscript={(item) => void openTranscript(item)}
@@ -453,19 +460,7 @@ export function App() {
           onNewTranscript={openNewTranscriptWorkspace}
           analysisBusy={analysisBusy}
           analysisError={analysisError}
-        /></Suspense> : <TranscriptPanel
-          result={selectedResult}
-          language={settings.language}
-          onLanguage={(language) => {
-            setSettings((current) => ({ ...current, language }))
-            if (window.tingxie) window.tingxie.saveSettings({ language }).catch(() => undefined)
-          }}
-          onChange={updateResult}
-          onExport={(result) => window.tingxie?.exportTranscript(result)}
-          chatOpen={chatOpen}
-          onOpenChat={() => setChatOpen(true)}
-          onRestoreWorkspace={() => setChatOpen(false)}
-        />}
+        /></Suspense> : null}
         {chatOpen && selectedResult && <>
           <PanelResizeHandle
             width={chatPanelWidth}

@@ -1,6 +1,7 @@
 import { Eye, EyeOff, KeyRound, LoaderCircle, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import type { AIProvider, AISettings } from '../../electron/types'
+import { GlassSelect } from './GlassSelect'
 
 interface AIProviderSettingsProps {
   settings: AISettings
@@ -119,10 +120,13 @@ export const AIProviderSettings = memo(function AIProviderSettings({ settings, o
 
   return <div className="ai-provider-settings">
     <div className="provider-toolbar">
-      <label><span>当前 Provider</span><select value={draft.id && settings.providers.some((provider) => provider.id === draft.id) ? draft.id : ''} disabled={busy === 'select'} onChange={(event) => chooseProvider(event.target.value)}>
-        {!draft.id && <option value="">新建自定义 Provider</option>}
-        {settings.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
-      </select></label>
+      <label><span>当前 Provider</span><GlassSelect
+        ariaLabel="当前 AI Provider"
+        value={draft.id && settings.providers.some((provider) => provider.id === draft.id) ? draft.id : '__new__'}
+        disabled={busy === 'select'}
+        options={[...(!draft.id ? [{ value: '__new__', label: '新建自定义 Provider' }] : []), ...settings.providers.map((provider) => ({ value: provider.id, label: provider.name }))]}
+        onValueChange={(value) => { if (value !== '__new__') void chooseProvider(value) }}
+      /></label>
       <button className="secondary-button compact-button" onClick={addProvider} disabled={disabled}><Plus size={15} />新增</button>
       {!draft.builtIn && draft.id && <button className="danger-icon-button" aria-label="删除自定义 Provider" onClick={remove} disabled={disabled}><Trash2 size={16} /></button>}
     </div>
@@ -132,7 +136,7 @@ export const AIProviderSettings = memo(function AIProviderSettings({ settings, o
     <div className="provider-form-grid">
       <label className="provider-field"><span>名称</span><input value={draft.name} disabled={draft.builtIn} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
       <label className="provider-field"><span>Model ID</span>{draft.builtIn
-        ? <select value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}><option value="mimo-v2.5">mimo-v2.5</option><option value="mimo-v2.5-pro">mimo-v2.5-pro</option></select>
+        ? <GlassSelect ariaLabel="AI 模型" value={draft.model} options={[{ value: 'mimo-v2.5', label: 'mimo-v2.5' }, { value: 'mimo-v2.5-pro', label: 'mimo-v2.5-pro' }]} onValueChange={(model) => setDraft((current) => ({ ...current, model }))} />
         : <input value={draft.model} placeholder="例如 gpt-4.1-mini" onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} />}</label>
       <label className="provider-field wide"><span>Base URL</span><input value={draft.baseUrl} placeholder="https://example.com/v1" onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
       <label className="provider-field"><span>上下文长度</span><input type="number" min="1024" step="1024" value={draft.contextWindow} onChange={(event) => setDraft((current) => ({ ...current, contextWindow: Number(event.target.value) }))} /></label>

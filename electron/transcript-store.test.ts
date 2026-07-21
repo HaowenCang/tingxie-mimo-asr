@@ -85,6 +85,16 @@ describe('split transcript store migration', () => {
     expect((await stat(unrelatedFile)).mtimeMs).toBe(unrelatedMtime)
   })
 
+  it('renames a transcript title without changing its text, media link or source path', async () => {
+    const original = { ...record('first', '正文保持不变'), mediaId: 'asset-1' }
+    const { store } = await fixture([original])
+
+    const updated = await store.rename('first', '项目周会.m4a')
+
+    expect(updated).toEqual({ ...original, fileName: '项目周会.m4a' })
+    expect((await store.listSummaries())[0].fileName).toBe('项目周会.m4a')
+  })
+
   it('does not commit an empty index when the legacy source is invalid', async () => {
     const { legacyFile, storeRoot, store } = await fixture([record('old', '原始正文')])
     await writeFile(legacyFile, '{invalid json', 'utf8')

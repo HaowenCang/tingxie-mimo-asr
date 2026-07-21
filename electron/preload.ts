@@ -15,8 +15,10 @@ contextBridge.exposeInMainWorld('tingxie', {
     ipcRenderer.on('library:import-progress', listener)
     return () => ipcRenderer.removeListener('library:import-progress', listener)
   },
-  createMediaFolder: (name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:create-folder', name),
+  createMediaFolder: (name: string, parentId?: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:create-folder', { name, parentId }),
   renameMediaFolder: (id: string, name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:rename-folder', { id, name }),
+  moveMediaFolder: (id: string, parentId?: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:move-folder', { id, parentId }),
+  deleteMediaFolder: (id: string, mode: 'preserve-content' | 'delete-media'): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:delete-folder', { id, mode }),
   renameMediaAsset: (id: string, name: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:rename-asset', { id, name }),
   moveMediaAssets: (ids: string[], folderId?: string): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:move-assets', { ids, folderId }),
   deleteMediaAssets: (ids: string[]): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:delete-assets', ids),

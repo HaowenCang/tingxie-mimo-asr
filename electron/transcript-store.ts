@@ -99,6 +99,16 @@ export class TranscriptStore {
     return updated
   }
 
+  async rename(id: string, fileName: string): Promise<TranscriptResult> {
+    const result = await this.get(id)
+    if (!result) throw new Error('未找到该转写记录')
+    const trimmed = fileName.trim()
+    if (!trimmed) throw new Error('录音名称不能为空')
+    const updated = { ...result, fileName: trimmed }
+    await this.save(updated)
+    return updated
+  }
+
   async delete(id: string): Promise<boolean> {
     await this.initialize()
     if (!this.index!.records.some((item) => item.id === id)) return false

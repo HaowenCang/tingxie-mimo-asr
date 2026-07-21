@@ -2,6 +2,7 @@ import { AlertTriangle, Bot, Check, Copy, LoaderCircle, RefreshCw, Send, Setting
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { AIChatSession, AIMessage, AISettings, AIStreamEvent, TranscriptResult } from '../../electron/types'
 import { isNearConversationBottom, shouldRenderMessageMarkdown, visibleAIMessageWindow } from './ai-chat-view-model'
+import { GlassSelect } from './GlassSelect'
 
 const MarkdownMessage = lazy(() => import('./MarkdownMessage').then((module) => ({ default: module.MarkdownMessage })))
 
@@ -206,7 +207,7 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
       <div><button aria-label="打开 AI 设置" onClick={onOpenSettings}><Settings2 size={17} /></button><button aria-label="关闭 AI 对话" onClick={onClose}><X size={18} /></button></div>
     </header>
     <div className="ai-provider-bar">
-      <select aria-label="AI Provider" value={provider?.id || ''} disabled={loading} onChange={(event) => chooseProvider(event.target.value)}>{settings.providers.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.model}</option>)}</select>
+      <GlassSelect ariaLabel="AI Provider" value={provider?.id || ''} disabled={loading} onValueChange={(value) => void chooseProvider(value)} options={settings.providers.map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` }))} size="compact" />
       <button aria-label="清空 AI 对话" disabled={loading || session.messages.length === 0} onClick={clearChat}><Trash2 size={15} /></button>
     </div>
 
