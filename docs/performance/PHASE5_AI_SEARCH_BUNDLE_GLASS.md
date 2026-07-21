@@ -4,9 +4,10 @@
 
 ## 状态
 
-- 🟡 进行中
+- 🟢 已完成
 - 分支：`codex/perf-bundle-and-glass`
 - 回退基线：`main` / `1323462`（PR #8）
+- 合并结果：PR #9 / `4b6dbe9`
 
 ## 已确认基线
 
@@ -69,7 +70,7 @@
 - [x] 应用内浏览器完成 1280×720 与 1080×700 验收；无横向溢出、错误遮罩或控制台 warning/error。
 - [x] 更新总计划和续作日志。
 - [x] 实现提交 `28701cd` 已推送，草稿 PR #9 已创建；首轮 Windows `test-and-build` 通过（1m45s）。
-- [ ] 状态文档提交通过最终 CI 后，将 PR #9 转为可合并并 squash merge。
+- [x] 最终 Windows `test-and-build` 通过（1m42s），PR #9 已 squash merge 为 `4b6dbe9`。
 
 ## 修改后结果
 
