@@ -4,9 +4,11 @@
 
 ## 状态
 
-- 🟡 实现与本地验证完成，等待 PR / Windows CI
+- 🟡 实现与首轮 Windows CI 完成，等待状态提交 CI、合并与 RC2 发布
 - 分支：`codex/fix-library-queue-glass-selects`
 - 回退基线：`main` / `9eefa34`
+- 实现提交：`caca99b`
+- Pull Request：[#15](https://github.com/HaowenCang/tingxie-mimo-asr/pull/15)
 - 目标版本：`v0.12.0-rc.2`
 - 参考截图：`C:\Users\20659\AppData\Local\Temp\codex-clipboard-cd525ac8-f4e2-40b0-8a02-4f6b9c6a84c0.png`
 
@@ -45,7 +47,8 @@
 - [x] 1424×856、1280×720 与 1080×700 真实界面验收，无横向溢出或控制台 warning/error。
 - [x] 对照参考截图检查布局、密度、玻璃材质、控件与文字；空结果栏已移除，队列与侧栏底部精确对齐。
 - [x] NSIS 安装包、隔离用户目录的 `win-unpacked` 启动、FFmpeg/FFprobe 与 SHA-256。
-- [ ] 独立提交、PR、Windows CI 和 `v0.12.0-rc.2` prerelease。
+- [x] 独立实现提交、PR 与首轮 Windows `test-and-build`。
+- [ ] 状态提交 CI、PR 合并和 `v0.12.0-rc.2` prerelease。
 
 ## 本地产物
 
@@ -68,4 +71,5 @@
 
 - 不移动或覆盖现有 `v0.12.0-rc.1` 标签与 Release。
 - 本阶段使用独立 PR，受保护 `main` 必须通过 `test-and-build`。
+- PR #15 首轮 Windows `test-and-build` 已通过；状态文档提交仍需再次通过同一门禁。
 - 严重问题可整体回退本 PR，不重写 `main` 历史。
