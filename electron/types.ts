@@ -148,6 +148,18 @@ export interface TranscriptSummary {
   analysisStatus: 'none' | 'ready' | 'error'
 }
 
+export interface TranscriptDuplicateReport {
+  duplicateGroups: number
+  removableSegments: number
+  removableCharacters: number
+  canUndo: boolean
+}
+
+export interface TranscriptDuplicateRepairResult extends TranscriptDuplicateReport {
+  removedSegments: number
+  result: TranscriptResult
+}
+
 export type AppTheme = 'system' | 'light' | 'dark'
 export type AccentColor = 'blue' | 'purple' | 'teal'
 export type ContentDensity = 'comfortable' | 'compact'

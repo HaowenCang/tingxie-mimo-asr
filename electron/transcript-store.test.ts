@@ -95,6 +95,30 @@ describe('split transcript store migration', () => {
     expect((await store.listSummaries())[0].fileName).toBe('项目周会.m4a')
   })
 
+  it('backs up, repairs and restores a transcript with consecutive duplicate segments', async () => {
+    const repeated = '这是一段足够长的脱敏测试内容，用于验证历史转写重复修复会先创建独立备份并且能够完整撤销。'
+    const original: TranscriptResult = {
+      ...record('duplicate', repeated.repeat(2)),
+      duration: 30,
+      segments: [
+        { id: 'first', start: 0, end: 10, text: repeated, chunkIndexes: [0] },
+        { id: 'second', start: 10, end: 20, text: repeated, chunkIndexes: [0] },
+      ],
+    }
+    const { storeRoot, store } = await fixture([original])
+
+    const repaired = await store.repairDuplicates('duplicate')
+    expect(repaired.result.segments).toHaveLength(1)
+    expect(repaired.canUndo).toBe(true)
+    expect(JSON.parse(await readFile(path.join(storeRoot, 'backups', 'dedup', 'duplicate.json'), 'utf8')).segments).toHaveLength(2)
+
+    const restored = await store.undoDuplicateRepair('duplicate')
+    expect(restored.segments).toHaveLength(2)
+    expect(restored.revision).toBeGreaterThan(repaired.result.revision || 0)
+    expect((await store.inspectDuplicates('duplicate')).canUndo).toBe(false)
+    await expect(stat(path.join(storeRoot, 'backups', 'dedup', 'duplicate.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('does not commit an empty index when the legacy source is invalid', async () => {
     const { legacyFile, storeRoot, store } = await fixture([record('old', '原始正文')])
     await writeFile(legacyFile, '{invalid json', 'utf8')

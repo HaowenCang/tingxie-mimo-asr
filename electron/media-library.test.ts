@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createMediaFolder, deleteMediaFolder, importMediaAssets, moveMediaAssets, moveMediaFolder, renameMediaAsset, type MediaLibraryIndex } from './media-library'
+import { createMediaFolder, deleteMediaFolder, importMediaAssets, moveMediaAssets, moveMediaFolder, normalizeMediaFolderParentId, renameMediaAsset, type MediaLibraryIndex } from './media-library'
 
 const tempDirs: string[] = []
 
@@ -11,6 +11,14 @@ afterEach(async () => {
 })
 
 describe('managed media library', () => {
+  it('treats only known legacy root sentinels as the root folder', () => {
+    expect(normalizeMediaFolderParentId(undefined)).toBeUndefined()
+    expect(normalizeMediaFolderParentId('')).toBeUndefined()
+    expect(normalizeMediaFolderParentId('__root')).toBeUndefined()
+    expect(normalizeMediaFolderParentId('unfiled')).toBeUndefined()
+    expect(normalizeMediaFolderParentId('folder-1')).toBe('folder-1')
+  })
+
   it('copies an imported recording into managed storage before returning it', async () => {
     const temp = await mkdtemp(path.join(os.tmpdir(), 'tingxie-library-test-'))
     tempDirs.push(temp)

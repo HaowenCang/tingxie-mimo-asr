@@ -29,7 +29,7 @@ describe('legacy transcript recovery', () => {
 
     expect(markup).toContain('历史转写')
     expect(markup).toContain('2026年07月15日 19点01分.m4a')
-    expect(markup).toContain('打开转写')
+    expect(markup).toContain('选择 2026年07月15日 19点01分.m4a')
   })
 
   it('virtualizes a 10,000 item media library instead of mounting every row', () => {
@@ -100,7 +100,8 @@ describe('legacy transcript recovery', () => {
     />)
 
     expect(markup).toContain('data-folder-depth="1"')
-    expect(markup).toContain('项目资料 文件夹操作')
-    expect(markup).toContain('访谈录音 文件夹操作')
+    expect(markup).toContain('aria-label="根文件夹名称"')
+    expect(markup).toContain('创建根文件夹')
+    expect(markup).not.toContain('folder-action-menu')
   })
 })

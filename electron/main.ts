@@ -9,6 +9,7 @@ import ffprobeStatic from 'ffprobe-static'
 import {
   DIRECT_UPLOAD_BYTES,
   HARD_CHUNK_BYTES,
+  collapseRepeatedTranscriptBlocks,
   estimateTranscriptSegments,
   parseSilenceDetectOutput,
   planAudioChunks,
@@ -60,6 +61,7 @@ import {
   linkTranscriptToAsset,
   moveMediaAssets,
   moveMediaFolder,
+  normalizeMediaFolderParentId,
   renameMediaAsset,
   renameMediaFolder,
   resolveManagedMediaPath,
@@ -1189,7 +1191,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('library:create-folder', async (_event, input: { name: string; parentId?: string }): Promise<MediaLibrarySnapshot> => {
     const settings = await readCachedSettings()
     const timestamp = new Date().toISOString()
-    const next = createMediaFolder(await readMediaLibrary(settings), { id: randomUUID(), name: input.name, ...(input.parentId ? { parentId: input.parentId } : {}), createdAt: timestamp, updatedAt: timestamp })
+    const parentId = normalizeMediaFolderParentId(input.parentId)
+    const next = createMediaFolder(await readMediaLibrary(settings), { id: randomUUID(), name: input.name, ...(parentId ? { parentId } : {}), createdAt: timestamp, updatedAt: timestamp })
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
   })
@@ -1418,6 +1421,17 @@ app.whenReady().then(async () => {
         })
       })
       const chunkTranscripts = chunkGroups.flat()
+      for (const [chunkIndex, chunk] of chunkTranscripts.entries()) {
+        if (chunk.status === 'failed') continue
+        const collapse = collapseRepeatedTranscriptBlocks(chunk.text)
+        if (!collapse.repeatGroups) continue
+        logDiagnostic('chunk-transcript-repetition-collapsed', {
+          jobId: input.id,
+          chunkIndex,
+          repeatGroups: collapse.repeatGroups,
+          removedCharacters: collapse.removedCharacters,
+        })
+      }
       const segments: TranscriptResult['segments'] = estimateTranscriptSegments(chunkTranscripts, media.duration, apiConfig.paragraphLength)
       const failedSegmentCount = segments.filter((segment) => segment.status === 'failed').length
       const successfulChunkCount = chunkTranscripts.length - failedChunks
@@ -1805,6 +1819,27 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('history:segment:patch', async (_event, input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }) => {
     return summarizeTranscript(await getTranscriptStore().patchSegment(input.transcriptId, input.segmentId, input.patch))
+  })
+  ipcMain.handle('history:rename', async (_event, input: { id: string; name: string }) => {
+    return getTranscriptStore().rename(input.id, input.name)
+  })
+  ipcMain.handle('history:duplicates:inspect', async (_event, id: string) => {
+    return getTranscriptStore().inspectDuplicates(id)
+  })
+  ipcMain.handle('history:duplicates:repair', async (_event, id: string) => {
+    const repair = await getTranscriptStore().repairDuplicates(id)
+    logDiagnostic('transcript-duplicates-repaired', {
+      transcriptId: id,
+      duplicateGroups: repair.duplicateGroups,
+      removedSegments: repair.removedSegments,
+      removedCharacters: repair.removableCharacters,
+    })
+    return repair
+  })
+  ipcMain.handle('history:duplicates:undo', async (_event, id: string) => {
+    const result = await getTranscriptStore().undoDuplicateRepair(id)
+    logDiagnostic('transcript-duplicates-restored', { transcriptId: id })
+    return result
   })
   ipcMain.handle('media:get-url', async (_event, transcriptId: string) => {
     const transcript = await getTranscriptStore().get(transcriptId)

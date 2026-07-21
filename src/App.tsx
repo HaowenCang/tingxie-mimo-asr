@@ -6,6 +6,7 @@ import { summarizeTranscript } from '../electron/transcript-summary'
 import { QueuePanel } from './components/QueuePanel'
 import { clampChatPanelWidth, DEFAULT_CHAT_PANEL_WIDTH, PanelResizeHandle } from './components/PanelResizeHandle'
 import { Sidebar } from './components/Sidebar'
+import { addRecentTranscript } from './components/recent-transcripts'
 import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
@@ -27,9 +28,19 @@ const isLongDemo = isDemo && demoParameters.has('long')
 const isLargeMediaDemo = isDemo && demoParameters.has('large-library')
 const isEmptyWorkspaceDemo = isDemo && demoParameters.has('empty-workspace')
 const isQueueOverflowDemo = isDemo && demoParameters.has('queue-overflow')
+const isQueueEmptyDemo = isDemo && demoParameters.has('queue-empty')
+const isLongNameDemo = isDemo && demoParameters.has('long-name')
+const isLegacyHistoryDemo = isDemo && demoParameters.has('legacy-history')
+const isDuplicateDemo = isDemo && demoParameters.has('duplicate-transcript')
 const demoLongText = '这是用于验证超长转写排版的演示文本，每一句都应连续排列，不应在下一个时间段之前留下大段空白。'.repeat(260)
 
-const demoSegments: TranscriptResult['segments'] = isLongDemo ? [
+const demoRepeatedText = '所以这是一个现代化的高速公路体系，就是和全球对接的一个高速公路体系。如果没有这个高速公路体系，中国的创新药有一个全球标准和全球路径，这是非常重要的。'
+const demoSegments: TranscriptResult['segments'] = isDuplicateDemo ? [
+  { id: 'duplicate-0', start: 0, end: 30, text: demoRepeatedText, status: 'success', chunkIndexes: [0] },
+  { id: 'duplicate-1', start: 30, end: 60, text: demoRepeatedText, status: 'success', chunkIndexes: [0] },
+  { id: 'duplicate-2', start: 60, end: 90, text: demoRepeatedText, status: 'success', chunkIndexes: [0] },
+  { id: 'duplicate-next', start: 90, end: 120, text: '接下来讨论不同的内容，因此这一段应当完整保留。', status: 'success', chunkIndexes: [0] },
+] : isLongDemo ? [
   { start: 0, end: 300, text: demoLongText, status: 'success' },
   { start: 300, end: 360, text: '', status: 'failed', error: '服务暂时不可用', attempts: 2 },
   { start: 360, end: 420, text: '这是失败片段之后的转写内容，应紧接错误提示显示。', status: 'success' },
@@ -61,14 +72,24 @@ const demoResult: TranscriptResult = {
   },
 }
 
-const demoFiles: QueueFile[] = [
+const demoFiles: QueueFile[] = isQueueEmptyDemo ? [] : [
   { id: 'demo-1', path: '', name: '产品周会.mp4', size: 1_331_433_472, duration: 4365, status: isLongDemo ? 'partial' : 'extracting', progress: isLongDemo ? 100 : 42, detail: isLongDemo ? '转写完成，1 个片段失败' : isQueueOverflowDemo ? '正在识别较长音频的第 18 个片段，服务返回了需要等待后重试的详细进度信息；此内容应当自动换行，并可在较小窗口中完整查看。' : '正在提取音频 42%', result: demoResult },
   { id: 'demo-2', path: '', name: '项目复盘.wav', size: 818_518_426, duration: 2912, status: 'waiting', progress: 0 },
   { id: 'demo-3', path: '', name: '客户访谈.mp3', size: 34_812_928, duration: 2178, status: 'done', progress: 100, result: { ...demoResult, id: 'demo-3', fileName: '客户访谈.mp3' } },
   ...(isQueueOverflowDemo ? Array.from({ length: 12 }, (_, index): QueueFile => ({ id: `queue-demo-${index}`, path: '', name: `批量访谈录音 ${index + 1}.m4a`, size: 22_000_000 + index, duration: 1200 + index * 30, status: 'waiting', progress: 0 })) : []),
 ]
 
-const demoHistory = demoFiles.flatMap((file) => file.result ? [summarizeTranscript(file.result)] : [])
+const demoLegacyResult: TranscriptResult = {
+  ...demoResult,
+  id: 'legacy-text-only',
+  fileName: '没有对应音频的历史访谈记录（长名称用于验证自动换行）.mp3',
+  sourcePath: undefined,
+  mediaId: undefined,
+}
+const demoHistory = [
+  ...demoFiles.flatMap((file) => file.result ? [summarizeTranscript(file.result)] : []),
+  ...(isLegacyHistoryDemo ? [summarizeTranscript(demoLegacyResult)] : []),
+]
 
 const initialAISettings: AISettings = {
   providers: [
@@ -97,7 +118,7 @@ const demoLibrary: MediaLibrarySnapshot = {
     progress: index % 3 === 0 ? 100 : 0,
   })) : demoFiles).map((file, index) => ({
     id: `media-${index}`,
-    displayName: file.name,
+    displayName: isLongNameDemo && index === 0 ? '瞭望 [11] 【瞭望】对话百利天恒创始人——全球首款 ADC 药物是如何炼成的？ [温竣岩] [超清 4K] [47分13秒] Mjk.mp4' : file.name,
     originalName: file.name,
     relativePath: `media\\media-${index}.${file.name.split('.').at(-1)}`,
     size: file.size,
@@ -116,6 +137,7 @@ export function App() {
   const [currentPage, setCurrentPage] = useState<'new' | 'library'>('new')
   const [files, setFiles] = useState<QueueFile[]>(isDemo ? demoFiles : [])
   const [selectedResult, setSelectedResult] = useState<TranscriptResult | undefined>(isDemo && !isEmptyWorkspaceDemo ? demoResult : undefined)
+  const [recentTranscripts, setRecentTranscripts] = useState<TranscriptSummary[]>(isDemo && !isEmptyWorkspaceDemo ? [summarizeTranscript(demoResult)] : [])
   const [settings, setSettings] = useState<AppSettings>({ hasApiKey: isDemo, language: 'auto', serviceMode: 'payg', configuredServices: isDemo ? ['payg'] : [], adaptiveConcurrency: true, preferences: DEFAULT_APP_PREFERENCES, mediaLibraryRoot: demoLibrary.rootPath })
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibrarySnapshot>(isDemo ? demoLibrary : { rootPath: '', folders: [], assets: [] })
   const [mediaImportProgress, setMediaImportProgress] = useState<MediaImportProgress>()
@@ -245,6 +267,7 @@ export function App() {
         setFiles((current) => current.map((item) => item.id === file.id ? { ...item, status, progress: 100, detail, result } : item))
         setSelectedResult(result)
         const summary = summarizeTranscript(result)
+        setRecentTranscripts((current) => addRecentTranscript(current, summary))
         setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
         window.tingxie.getMediaLibrary().then(setMediaLibrary).catch(() => undefined)
       } catch (error) {
@@ -352,6 +375,7 @@ export function App() {
     setSelectedResult(result)
     setFiles((current) => current.map((file) => file.id === result.id ? { ...file, result } : file))
     const summary = summarizeTranscript(result)
+    setRecentTranscripts((current) => current.some((item) => item.id === summary.id) ? addRecentTranscript(current, summary) : current)
     setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
     if (persist && window.tingxie) {
       window.clearTimeout(historySaveTimer.current)
@@ -369,10 +393,17 @@ export function App() {
   const openTranscript = useCallback(async (item: TranscriptSummary) => {
     const result = window.tingxie
       ? await window.tingxie.getTranscript(item.id)
-      : demoFiles.find((file) => file.result?.id === item.id)?.result
+      : demoFiles.find((file) => file.result?.id === item.id)?.result || (item.id === demoLegacyResult.id ? demoLegacyResult : undefined)
     if (!result) return
     setSelectedResult(result)
     setCurrentPage('new')
+    setRecentTranscripts((current) => addRecentTranscript(current, summarizeTranscript(result)))
+  }, [])
+
+  const updateHistorySummaries = useCallback((next: TranscriptSummary[]) => {
+    setHistory(next)
+    const byId = new Map(next.map((item) => [item.id, item]))
+    setRecentTranscripts((current) => current.flatMap((item) => byId.has(item.id) ? [byId.get(item.id)!] : []))
   }, [])
 
   const generateAnalysis = useCallback(async () => {
@@ -404,6 +435,7 @@ export function App() {
   async function removeHistory(item: TranscriptSummary) {
     await window.tingxie?.deleteHistory(item.id)
     setHistory((current) => current.filter((value) => value.id !== item.id))
+    setRecentTranscripts((current) => current.filter((value) => value.id !== item.id))
   }
 
   const doneCount = files.filter((file) => file.status === 'done').length
@@ -415,11 +447,11 @@ export function App() {
       className={`${chatOpen && selectedResult && currentPage === 'new' ? 'app-shell chat-open' : 'app-shell'}${selectedResult && currentPage === 'new' ? ' detail-open' : ''}${currentPage === 'new' && !selectedResult ? ' new-transcript-mode' : ''}${settings.preferences.sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`}
       style={{ '--chat-panel-width': `${chatPanelWidth}px` } as CSSProperties}
     >
-      <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} />
+      <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} recentTranscripts={recentTranscripts} activeTranscriptId={selectedResult?.id} onOpenTranscript={(item) => void openTranscript(item)} onRemoveRecent={(id) => setRecentTranscripts((current) => current.filter((item) => item.id !== id))} />
       {currentPage === 'library' ? <Suspense fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
         library={mediaLibrary}
         history={history}
-        onHistoryChange={setHistory}
+        onHistoryChange={updateHistorySummaries}
         importProgress={mediaImportProgress}
         onLibraryChange={setMediaLibrary}
         onOpenTranscript={(item) => void openTranscript(item)}

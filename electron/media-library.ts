@@ -25,6 +25,13 @@ export interface ImportMediaAssetsResult {
   duplicates: MediaAsset[]
 }
 
+const ROOT_FOLDER_SENTINELS = new Set(['', '__root', 'unfiled'])
+
+export function normalizeMediaFolderParentId(parentId?: string): string | undefined {
+  const normalized = parentId?.trim() || ''
+  return ROOT_FOLDER_SENTINELS.has(normalized) ? undefined : normalized
+}
+
 function safeExtension(name: string): string {
   return path.extname(name).toLocaleLowerCase().replace(/[^.a-z0-9]/g, '')
 }
