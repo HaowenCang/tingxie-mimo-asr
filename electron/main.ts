@@ -1047,6 +1047,7 @@ async function repairStoredTranscript(recordId: string): Promise<StoredTranscrip
         : 'failed'
     const repairedRecord: TranscriptResult = {
       ...record,
+      revision: (record.revision ?? 0) + 1,
       text: segments.map(plainTranscriptSegment).join('\n\n'),
       segments,
       chunks: repairedChunks,
@@ -1396,6 +1397,7 @@ app.whenReady().then(async () => {
           : 'failed'
       const result: TranscriptResult = {
         id: input.id,
+        revision: 0,
         fileName: input.fileName,
         createdAt: new Date().toISOString(),
         text: segments.map(plainTranscriptSegment).join('\n\n'),

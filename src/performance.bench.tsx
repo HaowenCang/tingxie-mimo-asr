@@ -4,7 +4,7 @@ import { DEFAULT_APP_PREFERENCES, type MediaLibrarySnapshot, type TranscriptResu
 import { MediaLibraryView } from './components/MediaLibraryView'
 import { buildMediaLibraryIndex, filterMediaLibraryRows } from './components/media-library-model'
 import { TranscriptDetail } from './components/TranscriptDetail'
-import { findTranscriptMatches } from './components/searchTranscript'
+import { buildTranscriptSearchIndex, findTranscriptMatches } from './components/searchTranscript'
 
 const segmentCount = 1_200
 const sentence = '这是用于性能基线的合成转写段落，包含产品进展、行动事项与后续计划。'
@@ -25,6 +25,7 @@ const transcript: TranscriptResult = {
   segments,
   outcome: 'complete',
 }
+const transcriptSearchIndex = buildTranscriptSearchIndex(segments)
 
 const noChange = () => undefined
 const noAsyncChange = async () => undefined
@@ -63,6 +64,10 @@ function legacyMediaLibraryDerivation() {
 describe('performance baseline', () => {
   bench('searches 1,200 transcript segments', () => {
     findTranscriptMatches(segments, '性能基线')
+  }, { iterations: 10, time: 200, warmupIterations: 2, warmupTime: 50 })
+
+  bench('searches 1,200 indexed transcript segments', () => {
+    findTranscriptMatches(segments, '性能基线', transcriptSearchIndex)
   }, { iterations: 10, time: 200, warmupIterations: 2, warmupTime: 50 })
 
   bench('server-renders a 1,200 segment transcript detail', () => {

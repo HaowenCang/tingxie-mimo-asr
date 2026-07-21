@@ -119,6 +119,7 @@ export interface TranscriptAnalysis {
 
 export interface TranscriptResult {
   id: string
+  revision?: number
   fileName: string
   createdAt: string
   text: string

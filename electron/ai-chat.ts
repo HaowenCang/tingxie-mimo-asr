@@ -8,6 +8,28 @@ export interface ChatCompletionMessage {
   content: string
 }
 
+const transcriptContextCache = new Map<string, string>()
+const MAX_TRANSCRIPT_CONTEXT_CACHE_ENTRIES = 8
+
+function transcriptContext(transcript: TranscriptResult): string {
+  if (transcript.revision === undefined) return timestampedTranscript(transcript)
+  const key = `${transcript.id}:${transcript.revision}`
+  const cached = transcriptContextCache.get(key)
+  if (cached !== undefined) {
+    transcriptContextCache.delete(key)
+    transcriptContextCache.set(key, cached)
+    return cached
+  }
+  const content = timestampedTranscript(transcript)
+  transcriptContextCache.set(key, content)
+  while (transcriptContextCache.size > MAX_TRANSCRIPT_CONTEXT_CACHE_ENTRIES) {
+    const oldest = transcriptContextCache.keys().next().value
+    if (oldest === undefined) break
+    transcriptContextCache.delete(oldest)
+  }
+  return content
+}
+
 export function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/+$/, '')
   const parsed = new URL(trimmed)
@@ -35,7 +57,7 @@ export function timestampedTranscript(transcript: TranscriptResult): string {
 }
 
 export function renderSystemPrompt(template: string, transcript: TranscriptResult): string {
-  const content = timestampedTranscript(transcript)
+  const content = transcriptContext(transcript)
   let rendered = template.replaceAll('{{fileName}}', transcript.fileName).replaceAll('{{transcript}}', content)
   if (!template.includes('{{fileName}}')) rendered += `\n\n当前转写标题：${transcript.fileName}`
   if (!template.includes('{{transcript}}')) {

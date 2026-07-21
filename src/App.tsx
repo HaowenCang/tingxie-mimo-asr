@@ -1,21 +1,26 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { summarizeTranscript } from '../electron/transcript-summary'
-import { AIChatPanel } from './components/AIChatPanel'
-import { MediaLibraryView } from './components/MediaLibraryView'
 import { QueuePanel } from './components/QueuePanel'
 import { clampChatPanelWidth, DEFAULT_CHAT_PANEL_WIDTH, PanelResizeHandle } from './components/PanelResizeHandle'
-import { SettingsModal } from './components/SettingsModal'
 import { Sidebar } from './components/Sidebar'
 import { TranscriptPanel } from './components/TranscriptPanel'
-import { TranscriptDetail } from './components/TranscriptDetail'
 import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
 import { loadStartupData } from './startup-data'
 import { applyLatestProgressEvents } from './progress-batching'
+
+const AIChatPanel = lazy(() => import('./components/AIChatPanel').then((module) => ({ default: module.AIChatPanel })))
+const MediaLibraryView = lazy(() => import('./components/MediaLibraryView').then((module) => ({ default: module.MediaLibraryView })))
+const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })))
+const TranscriptDetail = lazy(() => import('./components/TranscriptDetail').then((module) => ({ default: module.TranscriptDetail })))
+
+function DeferredView({ label, className = 'deferred-view' }: { label: string; className?: string }) {
+  return <div className={className} role="status"><LoaderCircle className="spin" size={20} />{label}</div>
+}
 
 const demoParameters = new URLSearchParams(location.search)
 const isDemo = import.meta.env.DEV && demoParameters.has('demo')
@@ -405,7 +410,7 @@ export function App() {
       style={{ '--chat-panel-width': `${chatPanelWidth}px` } as CSSProperties}
     >
       <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} />
-      {currentPage === 'library' ? <MediaLibraryView
+      {currentPage === 'library' ? <Suspense fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
         library={mediaLibrary}
         history={history}
         importProgress={mediaImportProgress}
@@ -418,7 +423,7 @@ export function App() {
           if (!window.tingxie) return
           setMediaLibrary(await window.tingxie.recoverHistoryMedia(item.id))
         }}
-      /> : <>
+      /></Suspense> : <>
         {!selectedResult && <main className="workspace">
           <header className="workspace-header">
             <div><h1>新建转写</h1><p>上传音频或视频，快速获得可编辑文本</p></div>
@@ -437,7 +442,7 @@ export function App() {
             onRetry={(file) => enqueue({ ...file, status: 'waiting', progress: 0, detail: undefined })}
           />
         </main>}
-        {selectedResult ? <TranscriptDetail
+        {selectedResult ? <Suspense fallback={<DeferredView className="transcript-detail deferred-view" label="正在打开转写详情" />}><TranscriptDetail
           result={selectedResult}
           preferences={settings.preferences}
           onChange={updateResult}
@@ -448,7 +453,7 @@ export function App() {
           onNewTranscript={openNewTranscriptWorkspace}
           analysisBusy={analysisBusy}
           analysisError={analysisError}
-        /> : <TranscriptPanel
+        /></Suspense> : <TranscriptPanel
           result={selectedResult}
           language={settings.language}
           onLanguage={(language) => {
@@ -469,14 +474,14 @@ export function App() {
             onCommit={commitChatPanelWidth}
             onReset={() => commitChatPanelWidth(DEFAULT_CHAT_PANEL_WIDTH)}
           />
-          <AIChatPanel transcript={selectedResult} settings={aiSettings} onSettingsChange={setAISettings} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} onClose={() => setChatOpen(false)} />
+          <Suspense fallback={<DeferredView className="ai-chat-panel deferred-panel" label="正在打开 AI 对话" />}><AIChatPanel transcript={selectedResult} settings={aiSettings} onSettingsChange={setAISettings} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} onClose={() => setChatOpen(false)} /></Suspense>
         </>}
       </>}
       {currentPage === 'new' && <footer className="status-bar">
         <span><Circle className={isWorking ? 'pulse-dot' : ''} size={9} fill="currentColor" />{files.length} 个文件<span>·</span>{doneCount} 个已完成</span>
         <span>{isWorking ? '正在本机处理音频' : '就绪'}</span>
       </footer>}
-      {showSettings && <SettingsModal
+      {showSettings && <Suspense fallback={<div className="modal-backdrop"><DeferredView className="settings-modal deferred-panel" label="正在打开设置" /></div>}><SettingsModal
         configuredServices={settings.configuredServices}
         language={settings.language}
         serviceMode={settings.serviceMode}
@@ -498,7 +503,7 @@ export function App() {
         onDeleteAIProvider={async (id) => window.tingxie ? window.tingxie.deleteAIProvider(id) : aiSettings}
         onSelectAIProvider={async (id) => window.tingxie ? window.tingxie.selectAIProvider(id) : { ...aiSettings, selectedProviderId: id }}
         onTestAIProvider={async (input) => { if (window.tingxie) await window.tingxie.testAIProvider(input) }}
-      />}
+      /></Suspense>}
     </div>
   )
 }
