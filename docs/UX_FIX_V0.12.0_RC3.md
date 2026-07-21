@@ -4,7 +4,7 @@
 
 ## 状态
 
-- 🟡 本地实现、界面验收与最终安装包验证完成，等待 PR / Windows CI
+- 🟡 本地实现、界面验收与最终安装包验证完成；PR #17 首轮 Windows CI 已通过，等待状态提交 CI 与合并
 - 分支：`codex/fix-library-dedup-navigation-rc3`
 - 回退基线：`main` / `343dab8`
 - 目标版本：`v0.12.0-rc.3`
@@ -55,7 +55,8 @@
 - [x] 使用脱敏夹具覆盖指定重复模式、正常复述保护、备份与撤销。
 - [x] 参考四张用户截图完成 1424×856、1280×720、1080×700 界面验收。
 - [x] TypeScript、Vite/Electron、生产依赖审计、NSIS 与隔离用户目录启动全部通过。
-- [ ] 独立 PR、Windows CI、注释标签和 `v0.12.0-rc.3` prerelease。
+- [x] 独立实现提交 `685f4df` 已推送到 PR #17；首轮 Windows `test-and-build` 通过（1m24s）。
+- [ ] 状态提交通过最终 CI 后合并 PR #17，并创建注释标签和 `v0.12.0-rc.3` prerelease。
 
 ## 当前实测
 
