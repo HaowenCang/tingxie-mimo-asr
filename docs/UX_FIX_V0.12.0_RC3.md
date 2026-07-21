@@ -4,7 +4,7 @@
 
 ## 状态
 
-- 🟡 本地实现、界面验收与最终安装包验证完成；PR #17 首轮 Windows CI 已通过，等待状态提交 CI 与合并
+- 🟢 已完成并发布 `v0.12.0-rc.3` GitHub prerelease
 - 分支：`codex/fix-library-dedup-navigation-rc3`
 - 回退基线：`main` / `343dab8`
 - 目标版本：`v0.12.0-rc.3`
@@ -56,7 +56,8 @@
 - [x] 参考四张用户截图完成 1424×856、1280×720、1080×700 界面验收。
 - [x] TypeScript、Vite/Electron、生产依赖审计、NSIS 与隔离用户目录启动全部通过。
 - [x] 独立实现提交 `685f4df` 已推送到 PR #17；首轮 Windows `test-and-build` 通过（1m24s）。
-- [ ] 状态提交通过最终 CI 后合并 PR #17，并创建注释标签和 `v0.12.0-rc.3` prerelease。
+- [x] 状态提交的最终 Windows CI 通过（1m31s），PR #17 squash merge 为 `c5ec878`。
+- [x] 注释标签 `v0.12.0-rc.3` 已创建；Windows Release 工作流 `29861601607` 通过并发布 prerelease。
 
 ## 当前实测
 
@@ -72,6 +73,9 @@
 - 最终解包版使用隔离临时用户目录成功启动；只终止本次测试创建、且可执行文件路径完全匹配的 4 个 Electron 进程。
 - 随包 FFmpeg 位于 `resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg.exe`；FFprobe 同样已随包分发。
 - 生产依赖审计：0 个已知漏洞。
+- GitHub Release：`https://github.com/HaowenCang/tingxie-mimo-asr/releases/tag/v0.12.0-rc.3`。
+- GitHub Runner 安装包：197,367,586 B，SHA-256 `4223B9679FEA261D479F3779E059B9F78DAE75E881BB254A602A180ED116E44B`；公开 `SHA256SUMS.txt` 与 GitHub 资产摘要一致。
+- 本机与 GitHub Runner 的 NSIS 哈希不同，原因是构建时间等非确定性元数据；用户下载文件以公开 Runner SHA 清单为准。
 
 ## 数据安全边界
 
