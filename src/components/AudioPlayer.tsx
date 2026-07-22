@@ -1,8 +1,10 @@
 import { Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from 'lucide-react'
+import { AnimatePresence, m } from 'motion/react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptResult } from '../../electron/types'
 import { formatDuration } from '../utils'
 import { GlassSelect } from './GlassSelect'
+import { useMotionVariants } from '../motion/variants'
 
 const PLAYBACK_RATE_OPTIONS = [0.75, 1, 1.25, 1.5, 2].map((value) => ({ value: String(value), label: `${value}x` }))
 
@@ -18,6 +20,7 @@ const WaveformBars = memo(function WaveformBars({ heights }: { heights: number[]
 })
 
 export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, seekTo, onTimeChange }: AudioPlayerProps) {
+  const { iconSwap } = useMotionVariants()
   const audioRef = useRef<HTMLAudioElement>(null)
   const [mediaUrl, setMediaUrl] = useState('')
   const [playing, setPlaying] = useState(false)
@@ -25,6 +28,8 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
   const [rate, setRate] = useState(preferences.defaultPlaybackRate)
   const [volume, setVolume] = useState(preferences.defaultVolume)
   const [muted, setMuted] = useState(false)
+  const [skipFeedback, setSkipFeedback] = useState(false)
+  const skipFeedbackTimer = useRef<number | undefined>(undefined)
   const duration = transcript.duration || audioRef.current?.duration || 0
   const waveform = useMemo(() => Array.from({ length: 104 }, (_, index) => {
     const value = Math.sin(index * 1.71) * 0.22 + Math.sin(index * 0.37) * 0.31 + 0.46
@@ -42,6 +47,8 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
     window.tingxie?.getMediaUrl(transcript.id).then((url) => { if (active) setMediaUrl(url) })
     return () => { active = false }
   }, [transcript.id])
+
+  useEffect(() => () => window.clearTimeout(skipFeedbackTimer.current), [])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -75,6 +82,9 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
       if (silence && silence.end < duration - 0.05) {
         audio.currentTime = silence.end
         next = silence.end
+        setSkipFeedback(true)
+        window.clearTimeout(skipFeedbackTimer.current)
+        skipFeedbackTimer.current = window.setTimeout(() => setSkipFeedback(false), 520)
       }
     }
     setCurrentTime(next)
@@ -91,9 +101,9 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
   return <footer className="detail-player" aria-label="音频播放器">
     <audio ref={audioRef} src={mediaUrl || undefined} preload="metadata" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onTimeUpdate={handleTimeUpdate} />
     <div className="player-controls">
-      <button aria-label={`后退 ${preferences.seekSeconds} 秒`} onClick={() => seek(currentTime - preferences.seekSeconds)}><RotateCcw size={18} /><small>{preferences.seekSeconds}</small></button>
-      <button className="player-play" aria-label={playing ? '暂停' : '播放'} disabled={!mediaUrl} onClick={toggle}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</button>
-      <button aria-label={`前进 ${preferences.seekSeconds} 秒`} onClick={() => seek(currentTime + preferences.seekSeconds)}><RotateCw size={18} /><small>{preferences.seekSeconds}</small></button>
+      <m.button whileTap={{ rotate: -12, scale: 0.96 }} aria-label={`后退 ${preferences.seekSeconds} 秒`} onClick={() => seek(currentTime - preferences.seekSeconds)}><RotateCcw size={18} /><small>{preferences.seekSeconds}</small></m.button>
+      <m.button whileTap={{ scale: 0.96 }} className="player-play" aria-label={playing ? '暂停' : '播放'} disabled={!mediaUrl} onClick={toggle}><AnimatePresence initial={false} mode="wait"><m.span className="motion-icon-slot" key={playing ? 'pause' : 'play'} variants={iconSwap} initial="initial" animate="animate" exit="exit">{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</m.span></AnimatePresence></m.button>
+      <m.button whileTap={{ rotate: 12, scale: 0.96 }} aria-label={`前进 ${preferences.seekSeconds} 秒`} onClick={() => seek(currentTime + preferences.seekSeconds)}><RotateCw size={18} /><small>{preferences.seekSeconds}</small></m.button>
     </div>
     <span className="player-time">{formatDuration(currentTime)}</span>
     <button className="waveform-track" aria-label="拖动播放进度" onClick={(event) => {
@@ -105,8 +115,8 @@ export const AudioPlayer = memo(function AudioPlayer({ transcript, preferences, 
     </button>
     <span className="player-time">{formatDuration(duration)}</span>
     <label className="player-rate"><span>倍速</span><GlassSelect ariaLabel="播放速度" value={String(rate)} onValueChange={(value) => setRate(Number(value))} options={PLAYBACK_RATE_OPTIONS} size="compact" /></label>
-    <button className="volume-button" aria-label={muted ? '取消静音' : '静音'} onClick={() => setMuted((value) => !value)}>{muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}</button>
+    <button className="volume-button" aria-label={muted ? '取消静音' : '静音'} onClick={() => setMuted((value) => !value)}><AnimatePresence initial={false} mode="wait"><m.span className="motion-icon-slot" key={muted || volume === 0 ? 'muted' : 'volume'} variants={iconSwap} initial="initial" animate="animate" exit="exit">{muted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}</m.span></AnimatePresence></button>
     <input className="volume-slider" aria-label="音量" type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} />
-    <span className={`skip-badge ${preferences.skipSilence ? 'active' : ''}`}>跳过静音 {preferences.skipSilence ? '开' : '关'}</span>
+    <span className={`skip-badge ${preferences.skipSilence ? 'active' : ''}${skipFeedback ? ' feedback' : ''}`}>跳过静音 {preferences.skipSilence ? '开' : '关'}</span>
   </footer>
 })

@@ -1,4 +1,5 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
+import { AnimatePresence, m } from 'motion/react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
@@ -14,6 +15,8 @@ import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
 import { loadStartupData } from './startup-data'
 import { applyLatestProgressEvents } from './progress-batching'
+import { MotionProvider } from './motion/MotionProvider'
+import { motionVariants } from './motion/variants'
 
 const AIChatPanel = lazy(() => import('./components/AIChatPanel').then((module) => ({ default: module.AIChatPanel })))
 const MediaLibraryView = lazy(() => import('./components/MediaLibraryView').then((module) => ({ default: module.MediaLibraryView })))
@@ -454,8 +457,10 @@ export function App() {
 
   const doneCount = files.filter((file) => file.status === 'done').length
   const isWorking = files.some((file) => ['preparing', 'extracting', 'transcribing'].includes(file.status))
+  const { fadeUp } = motionVariants(settings.preferences.reducedMotion)
 
   return (
+    <MotionProvider reducedMotion={settings.preferences.reducedMotion}>
     <div
       ref={shellRef}
       className={`${chatOpen && selectedResult && currentPage === 'new' ? 'app-shell chat-open' : 'app-shell'}${selectedResult && currentPage === 'new' ? ' detail-open' : ''}${currentPage === 'new' && !selectedResult ? ' new-transcript-mode' : ''}${settings.preferences.sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`}
@@ -463,7 +468,8 @@ export function App() {
     >
       <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} recentTranscripts={recentTranscripts} activeTranscriptId={selectedResult?.id} onOpenTranscript={(item) => void openTranscript(item)} onRemoveRecent={(id) => setRecentTranscripts((current) => current.filter((item) => item.id !== id))} />
       {!settings.preferences.sidebarCollapsed && shellWidth > 1220 && <LayoutResizeHandle className="sidebar-layout-resizer" label="调整主导航宽度" orientation="vertical" value={sidebarWidth} min={150} max={280} onResize={(value) => setSidebarWidth(clampLayoutValue('sidebar', value, shellWidth))} onCommit={(value) => commitPrimaryLayout('sidebarWidth', clampLayoutValue('sidebar', value, shellWidth))} onReset={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); commitPrimaryLayout('sidebarWidth', DEFAULT_SIDEBAR_WIDTH) }} />}
-      {currentPage === 'library' ? <Suspense fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
+      <AnimatePresence initial={false} mode="sync">
+      {currentPage === 'library' && <Suspense key="library" fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
         library={mediaLibrary}
         history={history}
         preferences={settings.preferences}
@@ -479,8 +485,8 @@ export function App() {
           if (!window.tingxie) return
           setMediaLibrary(await window.tingxie.recoverHistoryMedia(item.id))
         }}
-      /></Suspense> : <>
-        {!selectedResult && <main className="workspace">
+      /></Suspense>}
+        {currentPage === 'new' && !selectedResult && <m.main key="workspace" className="workspace" layout variants={fadeUp} initial="initial" animate="animate" exit="exit">
           <header className="workspace-header">
             <div><h1>新建转写</h1><p>上传音频或视频，快速获得可编辑文本</p></div>
             <div className={`service-status ${settings.hasApiKey ? 'online' : 'offline'}`}>
@@ -498,8 +504,8 @@ export function App() {
             onRemove={(file) => setFiles((current) => current.filter((item) => item.id !== file.id))}
             onRetry={(file) => enqueue({ ...file, status: 'waiting', progress: 0, detail: undefined })}
           />
-        </main>}
-        {selectedResult ? <Suspense fallback={<DeferredView className="transcript-detail deferred-view" label="正在打开转写详情" />}><TranscriptDetail
+        </m.main>}
+        {currentPage === 'new' && selectedResult ? <Suspense key={`detail-${selectedResult.id}`} fallback={<DeferredView className="transcript-detail deferred-view" label="正在打开转写详情" />}><TranscriptDetail
           result={selectedResult}
           preferences={settings.preferences}
           onChange={updateResult}
@@ -511,22 +517,24 @@ export function App() {
           analysisBusy={analysisBusy}
           analysisError={analysisError}
         /></Suspense> : null}
-        {chatOpen && selectedResult && <>
+      </AnimatePresence>
+        {currentPage === 'new' && chatOpen && selectedResult &&
           <PanelResizeHandle
             width={chatPanelWidth}
             shellWidth={shellWidth}
             onResize={previewChatPanelWidth}
             onCommit={commitChatPanelWidth}
             onReset={() => commitChatPanelWidth(DEFAULT_CHAT_PANEL_WIDTH)}
-          />
-          <Suspense fallback={<DeferredView className="ai-chat-panel deferred-panel" label="正在打开 AI 对话" />}><AIChatPanel transcript={selectedResult} settings={aiSettings} onSettingsChange={setAISettings} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} onClose={() => setChatOpen(false)} /></Suspense>
-        </>}
-      </>}
+          />}
+        <AnimatePresence initial={false}>
+          {currentPage === 'new' && chatOpen && selectedResult && <Suspense key="ai-chat" fallback={<DeferredView className="ai-chat-panel deferred-panel" label="正在打开 AI 对话" />}><AIChatPanel transcript={selectedResult} settings={aiSettings} onSettingsChange={setAISettings} onOpenSettings={() => { setSettingsSection('ai'); setShowSettings(true) }} onClose={() => setChatOpen(false)} /></Suspense>}
+        </AnimatePresence>
       {currentPage === 'new' && <footer className="status-bar">
         <span><Circle className={isWorking ? 'pulse-dot' : ''} size={9} fill="currentColor" />{files.length} 个文件<span>·</span>{doneCount} 个已完成</span>
         <span>{isWorking ? '正在本机处理音频' : '就绪'}</span>
       </footer>}
-      {showSettings && <Suspense fallback={<div className="modal-backdrop"><DeferredView className="settings-modal deferred-panel" label="正在打开设置" /></div>}><SettingsModal
+      <AnimatePresence initial={false}>
+      {showSettings && <Suspense key="settings" fallback={<div className="modal-backdrop"><DeferredView className="settings-modal deferred-panel" label="正在打开设置" /></div>}><SettingsModal
         configuredServices={settings.configuredServices}
         language={settings.language}
         serviceMode={settings.serviceMode}
@@ -549,6 +557,8 @@ export function App() {
         onSelectAIProvider={async (id) => window.tingxie ? window.tingxie.selectAIProvider(id) : { ...aiSettings, selectedProviderId: id }}
         onTestAIProvider={async (input) => { if (window.tingxie) await window.tingxie.testAIProvider(input) }}
       /></Suspense>}
+      </AnimatePresence>
     </div>
+    </MotionProvider>
   )
 }

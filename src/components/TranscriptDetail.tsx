@@ -1,5 +1,6 @@
-import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock3, Copy, Download, FileText, LoaderCircle, Search, Sparkles, WandSparkles, X } from 'lucide-react'
+import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Copy, Download, FileText, LoaderCircle, Search, Sparkles, WandSparkles, X } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { AnimatePresence, m } from 'motion/react'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptDuplicateReport, TranscriptResult } from '../../electron/types'
 import { inspectTranscriptDuplicates } from '../../electron/transcript-dedup'
@@ -8,6 +9,8 @@ import { AudioPlayer } from './AudioPlayer'
 import { EditableTranscriptSegment } from './EditableTranscriptSegment'
 import { findActiveTranscriptSegment } from './playback-timeline'
 import { findTranscriptMatches, updateTranscriptSearchIndex, type TranscriptMatch, type TranscriptSearchIndex } from './searchTranscript'
+import { useReducedMotionSetting } from '../motion/MotionProvider'
+import { useMotionVariants } from '../motion/variants'
 
 const MAX_VISIBLE_SEARCH_RESULTS = 100
 
@@ -42,6 +45,8 @@ function MarkedExcerpt({ match }: { match: TranscriptMatch }) {
 }
 
 export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onPatchSegment, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
+  const { fade, fadeUp, iconSwap, listItem } = useMotionVariants()
+  const reducedMotion = useReducedMotionSetting()
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [activeMatch, setActiveMatch] = useState(0)
@@ -217,25 +222,25 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
     onPatchSegment?.(result.id, segment.id || `segment-${index}`, { text })
   }, [result.id, result.segments, onPatchSegment, updateSegment])
 
-  return <main className="transcript-detail">
+  return <m.main layout variants={fadeUp} initial="initial" animate="animate" exit="exit" className="transcript-detail">
     <header className="detail-header glass-section">
       <div><span className="detail-file-icon"><FileText size={19} /></span><span><h1>{result.fileName}</h1><p>{formatDuration(result.duration)} · {result.segments.filter((segment) => segment.status !== 'failed').length} 个段落 · 时间为切片内近似估算</p></span></div>
-      <div className="detail-actions"><label className="detail-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索原文" />{query && <><span>{searchMatches.length ? `${activeMatch + 1}/${searchMatches.length}` : '0 项'}</span><button aria-label="清除搜索" onClick={() => setQuery('')}><X size={13} /></button></>}</label><button onClick={copy}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? '已复制' : '复制'}</button><button onClick={onExport}><Download size={15} />导出</button><button className="detail-ai-button" onClick={onOpenChat}><Bot size={16} />AI 对话</button><button onClick={onNewTranscript}>新增转写</button></div>
+      <div className="detail-actions"><label className="detail-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索原文" />{query && <><span>{searchMatches.length ? `${activeMatch + 1}/${searchMatches.length}` : '0 项'}</span><button aria-label="清除搜索" onClick={() => setQuery('')}><X size={13} /></button></>}</label><button className="copy-action" onClick={copy}><AnimatePresence initial={false} mode="wait"><m.span className="motion-icon-slot" key={copied ? 'copied' : 'copy'} variants={iconSwap} initial="initial" animate="animate" exit="exit">{copied ? <Check size={15} /> : <Copy size={15} />}</m.span></AnimatePresence><span>{copied ? '已复制' : '复制'}</span></button><button onClick={onExport}><Download size={15} />导出</button><button className="detail-ai-button" onClick={onOpenChat}><Bot size={16} />AI 对话</button><button onClick={onNewTranscript}>新增转写</button></div>
     </header>
 
     <div className="detail-scroll" ref={scrollRef}>
       <section className="smart-overview glass-section">
-        <header><div><span><Sparkles size={17} /></span><div><h2>智能速览</h2><p>由已保存的对话 API 基于当前原文生成</p></div></div><div>{result.analysis && <button className="icon-button" aria-label={overviewOpen ? '收起智能速览' : '展开智能速览'} onClick={() => setOverviewOpen((value) => !value)}>{overviewOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}</button>}<button className="primary-button compact" disabled={analysisBusy} onClick={onGenerateAnalysis}>{analysisBusy ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{result.analysis ? '重新生成' : '生成智能速览'}</button></div></header>
+        <header><div><span><Sparkles size={17} /></span><div><h2>智能速览</h2><p>由已保存的对话 API 基于当前原文生成</p></div></div><div>{result.analysis && <button className="icon-button" aria-label={overviewOpen ? '收起智能速览' : '展开智能速览'} aria-expanded={overviewOpen} onClick={() => setOverviewOpen((value) => !value)}><ChevronDown className={overviewOpen ? 'expanded' : ''} size={18} /></button>}<button className="primary-button compact" disabled={analysisBusy} onClick={onGenerateAnalysis}>{analysisBusy ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{result.analysis ? '重新生成' : '生成智能速览'}</button></div></header>
         {analysisError ? <div className="analysis-error" role="alert" aria-live="polite"><AlertTriangle size={17} /><div><strong>智能速览生成失败</strong><p>{analysisError}</p></div><button disabled={analysisBusy} onClick={onGenerateAnalysis}>重试</button></div> : null}
-        {overviewOpen && (result.analysis ? <>
+        <AnimatePresence initial={false}>{overviewOpen && <m.div className="smart-overview-content" initial={{ height: reducedMotion ? 'auto' : 0, opacity: reducedMotion ? 1 : 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: reducedMotion ? 'auto' : 0, opacity: reducedMotion ? 1 : 0 }} transition={{ duration: reducedMotion ? 0 : 0.24 }}>{result.analysis ? <>
           <div className="keyword-row">{result.analysis.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
           <div className="overview-copy"><strong>全文概要</strong><p>{result.analysis.overview}</p></div>
-          <div className="analysis-tabs"><button className={tab === 'chapters' ? 'active' : ''} onClick={() => setTab('chapters')}>章节速览</button><button className={tab === 'speech' ? 'active' : ''} onClick={() => setTab('speech')}>发言总结</button><button className={tab === 'points' ? 'active' : ''} onClick={() => setTab('points')}>要点回顾</button></div>
-          <AnalysisView analysis={result.analysis} tab={tab} onChapterSelect={jumpToChapter} />
-        </> : analysisError ? null : <div className="overview-empty"><p>生成关键词、全文概要、章节、内容脉络、要点与行动项。当前版本不会推断或展示说话人身份。</p></div>)}
+          <div className="analysis-tabs"><button className={tab === 'chapters' ? 'active' : ''} onClick={() => setTab('chapters')}>章节速览{tab === 'chapters' && <m.i className="analysis-tab-indicator" layoutId="analysis-tab-indicator" />}</button><button className={tab === 'speech' ? 'active' : ''} onClick={() => setTab('speech')}>发言总结{tab === 'speech' && <m.i className="analysis-tab-indicator" layoutId="analysis-tab-indicator" />}</button><button className={tab === 'points' ? 'active' : ''} onClick={() => setTab('points')}>要点回顾{tab === 'points' && <m.i className="analysis-tab-indicator" layoutId="analysis-tab-indicator" />}</button></div>
+          <AnimatePresence initial={false} mode="wait"><m.div key={tab} variants={fade} initial="initial" animate="animate" exit="exit"><AnalysisView analysis={result.analysis} tab={tab} onChapterSelect={jumpToChapter} /></m.div></AnimatePresence>
+        </> : analysisError ? null : <div className="overview-empty"><p>生成关键词、全文概要、章节、内容脉络、要点与行动项。当前版本不会推断或展示说话人身份。</p></div>}</m.div>}</AnimatePresence>
       </section>
 
-      {(duplicateReport?.removableSegments || duplicateReport?.canUndo || duplicateError) ? <section className="duplicate-repair-banner glass-section" aria-live="polite">
+      <AnimatePresence initial={false}>{(duplicateReport?.removableSegments || duplicateReport?.canUndo || duplicateError) ? <m.section variants={listItem} initial="initial" animate="animate" exit="exit" className="duplicate-repair-banner glass-section" aria-live="polite">
         <div><AlertTriangle size={18} /><span>{duplicateReport?.removableSegments
           ? <><strong>检测到连续重复内容</strong><p>{duplicateReport.duplicateGroups} 组、共 {duplicateReport.removableSegments} 个重复段。仅匹配同一音频切片内连续且一致的长文本。</p></>
           : <><strong>重复内容修复已完成</strong><p>原记录已单独备份，可随时撤销恢复。</p></>}</span></div>
@@ -245,14 +250,14 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
             ? <><button className="primary-button compact" disabled={duplicateBusy} onClick={() => void repairDuplicates()}>{duplicateBusy ? <LoaderCircle className="spin" size={14} /> : null}确认修复</button><button disabled={duplicateBusy} onClick={() => setDuplicateConfirmOpen(false)}>取消</button></>
             : <button className="primary-button compact" onClick={() => setDuplicateConfirmOpen(true)}>预览并修复</button>
           : duplicateReport?.canUndo ? <button disabled={duplicateBusy} onClick={() => void undoDuplicateRepair()}>{duplicateBusy ? <LoaderCircle className="spin" size={14} /> : null}撤销修复</button> : null}</div>
-      </section> : null}
+      </m.section> : null}</AnimatePresence>
 
       <section className="original-section">
         <header><div><FileText size={18} /><h2>原文</h2></div><span>点击 ≈ 时间可播放核对 · 可直接编辑</span></header>
-        {query.trim() && <aside className={`transcript-search-results${searchMatches.length ? '' : ' empty'}`} aria-live="polite">
+        <AnimatePresence initial={false}>{query.trim() && <m.aside variants={listItem} initial="initial" animate="animate" exit="exit" className={`transcript-search-results${searchMatches.length ? '' : ' empty'}`} aria-live="polite">
           <div className="search-results-heading"><div><Search size={16} /><strong>{searchMatches.length ? `找到 ${searchMatches.length} 处结果` : '没有找到匹配内容'}</strong></div>{searchMatches.length > 0 && <span><button aria-label="上一个结果" onClick={() => jumpToMatch(activeMatch - 1)}><ChevronLeft size={15} /></button><button aria-label="下一个结果" onClick={() => jumpToMatch(activeMatch + 1)}><ChevronRight size={15} /></button></span>}</div>
           {searchMatches.length ? <><div className="search-result-list">{visibleSearchMatches.map((match, index) => <button key={match.id} className={activeMatch === index ? 'active' : ''} onClick={() => jumpToMatch(index)}><time>≈ {formatDuration(result.segments[match.segmentIndex].start)}</time><span><MarkedExcerpt match={match} /></span></button>)}</div>{searchMatches.length > MAX_VISIBLE_SEARCH_RESULTS && <p className="search-result-limit">结果较多，列表仅显示前 {MAX_VISIBLE_SEARCH_RESULTS} 项；可继续使用上一项/下一项浏览全部结果。</p>}</> : <p>请检查关键词，或尝试更短、更常见的词语。</p>}
-        </aside>}
+        </m.aside>}</AnimatePresence>
         {result.failedSegmentCount ? <div className="transcript-warning"><AlertTriangle size={16} />{result.failedSegmentCount} 个切片重试后仍失败，已保留原时间缺口。</div> : null}
         <div ref={timelineRef} className="timeline" data-virtualized="true" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -273,5 +278,5 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
       </section>
     </div>
     <AudioPlayer transcript={result} preferences={preferences} seekTo={seekTo} onTimeChange={handlePlaybackProgress} />
-  </main>
+  </m.main>
 })
