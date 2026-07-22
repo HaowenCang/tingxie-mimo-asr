@@ -1,6 +1,8 @@
 import { AlertTriangle, Bot, Check, Copy, LoaderCircle, RefreshCw, Send, Settings2, Square, Trash2, X } from 'lucide-react'
+import { AnimatePresence, m } from 'motion/react'
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { AIChatSession, AIMessage, AISettings, AIStreamEvent, TranscriptResult } from '../../electron/types'
+import { useMotionVariants } from '../motion/variants'
 import { isNearConversationBottom, shouldRenderMessageMarkdown, visibleAIMessageWindow } from './ai-chat-view-model'
 import { GlassSelect } from './GlassSelect'
 
@@ -26,6 +28,7 @@ const PREVIEW_SESSION = (transcriptId: string): AIChatSession => isMarkdownPrevi
 } : EMPTY_SESSION(transcriptId)
 
 export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onSettingsChange, onOpenSettings, onClose }: AIChatPanelProps) {
+  const { fade, iconSwap, listItem, panelFromRight } = useMotionVariants()
   const [session, setSession] = useState<AIChatSession>(() => PREVIEW_SESSION(transcript.id))
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -201,7 +204,7 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
     request('new', message)
   }
 
-  return <aside className="ai-chat-panel" id="ai-chat-panel">
+  return <m.aside layout variants={panelFromRight} initial="initial" animate="animate" exit="exit" className="ai-chat-panel" id="ai-chat-panel">
     <header className="ai-chat-header">
       <div><span className="ai-avatar"><Bot size={17} /></span><span><strong>AI 对话</strong><small>基于当前转写与背景知识</small></span></div>
       <div><button aria-label="打开 AI 设置" onClick={onOpenSettings}><Settings2 size={17} /></button><button aria-label="关闭 AI 对话" onClick={onClose}><X size={18} /></button></div>
@@ -212,32 +215,32 @@ export const AIChatPanel = memo(function AIChatPanel({ transcript, settings, onS
     </div>
 
     <div className="ai-messages" onScroll={(event) => { stickToBottomRef.current = isNearConversationBottom(event.currentTarget) }}>
-      {loadingSession ? <div className="ai-loading"><LoaderCircle className="spin" size={19} />正在读取对话</div> : session.messages.length === 0 ? <div className="ai-empty">
+      {loadingSession ? <m.div key="loading" variants={fade} initial="initial" animate="animate" exit="exit" className="ai-loading"><LoaderCircle className="spin" size={19} />正在读取对话</m.div> : session.messages.length === 0 ? <m.div key="empty" variants={fade} initial="initial" animate="animate" exit="exit" className="ai-empty">
         <span><Bot size={24} /></span><h3>询问这份转写</h3><p>可以总结内容、解释录音中提到的概念，或帮助梳理逻辑链路。</p>
         <div>{['总结核心观点', '提取行动项', '解释录音中的关键概念'].map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>
-      </div> : <>{visibleMessages.hiddenCount > 0 && <button className="ai-history-expand" onClick={() => setShowAllMessages(true)}>显示更早的 {visibleMessages.hiddenCount} 条消息</button>}{visibleMessages.messages.map((message) => <article key={message.id} className={`ai-message ${message.role}`}>
+      </m.div> : <>{visibleMessages.hiddenCount > 0 && <button className="ai-history-expand" onClick={() => setShowAllMessages(true)}>显示更早的 {visibleMessages.hiddenCount} 条消息</button>}<AnimatePresence initial={false} mode="popLayout">{visibleMessages.messages.map((message) => <m.article layout="position" variants={listItem} initial="initial" animate="animate" exit="exit" key={message.id} className={`ai-message ${message.role}`}>
         <div className="ai-message-role">{message.role === 'user' ? '你' : 'AI'}</div>
         <div className="ai-message-content">{message.content
           ? shouldRenderMessageMarkdown(message)
             ? <Suspense fallback={<span className="ai-markdown-loading">正在排版…</span>}><MarkdownMessage content={message.content} /></Suspense>
             : message.role === 'assistant' ? <span className="ai-stream-preview">{message.content}</span> : message.content
           : message.id === 'streaming' ? <span className="typing-indicator"><i /><i /><i /></span> : ''}</div>
-        {message.role === 'assistant' && message.content && <button className="ai-message-copy" aria-label="复制 AI 回答" onClick={() => copyMessage(message)}>{copiedId === message.id ? <Check size={13} /> : <Copy size={13} />}</button>}
-      </article>)}</>}
+        {message.role === 'assistant' && message.content && <button className="ai-message-copy" aria-label="复制 AI 回答" onClick={() => copyMessage(message)}><AnimatePresence initial={false} mode="wait"><m.span className="motion-icon-slot" key={copiedId === message.id ? 'copied' : 'copy'} variants={iconSwap} initial="initial" animate="animate" exit="exit">{copiedId === message.id ? <Check size={13} /> : <Copy size={13} />}</m.span></AnimatePresence></button>}
+      </m.article>)}</AnimatePresence></>}
       <div ref={messagesEndRef} />
     </div>
 
-    {error && <div className="ai-error"><AlertTriangle size={14} />{error}</div>}
+    <AnimatePresence initial={false}>{error && <m.div variants={listItem} initial="initial" animate="animate" exit="exit" className="ai-error"><AlertTriangle size={14} />{error}</m.div>}</AnimatePresence>
     <div className="ai-composer">
       <textarea aria-label="向 AI 提问" rows={3} value={input} disabled={loading} placeholder="询问转写内容，或让 AI 解释相关背景知识…" onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() }
       }} />
-      <div><span>Enter 发送 · Shift+Enter 换行</span>{loading
-        ? <button className="stop-button" onClick={() => window.tingxie?.cancelAIMessage(activeRequestIdRef.current)}><Square size={14} fill="currentColor" />停止</button>
-        : <button className="send-button" aria-label="发送 AI 消息" disabled={!input.trim()} onClick={submit}><Send size={16} /></button>}</div>
+      <div><span>Enter 发送 · Shift+Enter 换行</span><AnimatePresence initial={false} mode="wait">{loading
+        ? <m.button key="stop" variants={iconSwap} initial="initial" animate="animate" exit="exit" className="stop-button" onClick={() => window.tingxie?.cancelAIMessage(activeRequestIdRef.current)}><Square size={14} fill="currentColor" />停止</m.button>
+        : <m.button key="send" variants={iconSwap} initial="initial" animate="animate" exit="exit" className="send-button" aria-label="发送 AI 消息" disabled={!input.trim()} onClick={submit}><Send size={16} /></m.button>}</AnimatePresence></div>
     </div>
-    {session.messages.at(-1)?.role === 'assistant' && !loading && <button className="regenerate-button" onClick={() => request('regenerate')}><RefreshCw size={13} />重新生成</button>}
+    <AnimatePresence initial={false}>{session.messages.at(-1)?.role === 'assistant' && !loading && <m.button variants={fade} initial="initial" animate="animate" exit="exit" className="regenerate-button" onClick={() => request('regenerate')}><RefreshCw size={13} />重新生成</m.button>}</AnimatePresence>
 
-    {showTokenPlanWarning && <div className="ai-warning-backdrop"><section role="alertdialog" aria-modal="true" aria-labelledby="token-plan-warning-title"><AlertTriangle size={25} /><h3 id="token-plan-warning-title">确认 Token Plan 使用范围</h3><p>小米官方说明 Token Plan 仅限 Coding 场景，非 Coding 场景可能导致订阅暂停或 API Key 被封禁。请确认当前使用符合服务条款。</p><div><button className="secondary-button" onClick={() => { setShowTokenPlanWarning(false); setPending(null) }}>取消</button><button className="primary-button compact" onClick={confirmTokenPlan}>我已了解并继续</button></div></section></div>}
-  </aside>
+    <AnimatePresence initial={false}>{showTokenPlanWarning && <m.div variants={fade} initial="initial" animate="animate" exit="exit" className="ai-warning-backdrop"><m.section variants={listItem} initial="initial" animate="animate" exit="exit" role="alertdialog" aria-modal="true" aria-labelledby="token-plan-warning-title"><AlertTriangle size={25} /><h3 id="token-plan-warning-title">确认 Token Plan 使用范围</h3><p>小米官方说明 Token Plan 仅限 Coding 场景，非 Coding 场景可能导致订阅暂停或 API Key 被封禁。请确认当前使用符合服务条款。</p><div><button className="secondary-button" onClick={() => { setShowTokenPlanWarning(false); setPending(null) }}>取消</button><button className="primary-button compact" onClick={confirmTokenPlan}>我已了解并继续</button></div></m.section></m.div>}</AnimatePresence>
+  </m.aside>
 })

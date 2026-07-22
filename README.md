@@ -33,6 +33,7 @@ MiMo 官方文档：[语音识别（MiMo-V2.5-ASR）](https://mimo.mi.com/docs/z
 
 ## 设计与待开发
 
+- [交互动效制作方案](./docs/INTERACTION_MOTION_PLAN.md)
 - [转写详情、智能速览与同步播放完整方案](./docs/TRANSCRIPT_DETAIL_PLAN.md)
 - [待开发功能](./docs/PENDING_FEATURES.md)
 - [设置项联动审查](./docs/SETTINGS_LINKAGE_AUDIT.md)

@@ -1,6 +1,8 @@
 import { CheckCircle2, ExternalLink, Eye, EyeOff, FolderCog, KeyRound, LoaderCircle, ShieldCheck, X } from 'lucide-react'
+import { AnimatePresence, m } from 'motion/react'
 import { memo, useState } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type ServiceMode } from '../../electron/types'
+import { useMotionVariants } from '../motion/variants'
 import { AIProviderSettings } from './AIProviderSettings'
 import { GlassSelect } from './GlassSelect'
 
@@ -28,6 +30,7 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal = memo(function SettingsModal({ configuredServices, language: initialLanguage, serviceMode: initialServiceMode, adaptiveConcurrency: initialAdaptiveConcurrency, aiSettings, preferences: initialPreferences, mediaLibraryRoot, initialSection = 'asr', onClose, onSave, onSavePreferences, onChooseMediaLibraryRoot, onTest, onAISettingsChange, onSaveAIProvider, onDeleteAIProvider, onSelectAIProvider, onTestAIProvider }: SettingsModalProps) {
+  const { dialogPanel, fade } = useMotionVariants()
   const [section, setSection] = useState<'asr' | 'ai' | 'personalize'>(initialSection)
   const [apiKey, setApiKey] = useState('')
   const [language, setLanguage] = useState(initialLanguage)
@@ -77,10 +80,11 @@ export const SettingsModal = memo(function SettingsModal({ configuredServices, l
     || serviceMode !== initialServiceMode
     || adaptiveConcurrency !== initialAdaptiveConcurrency
 
-  return <div className="modal-backdrop" onMouseDown={onClose}>
-    <section className="settings-modal" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  return <m.div className="modal-backdrop" variants={fade} initial="initial" animate="animate" exit="exit" onMouseDown={onClose}>
+    <m.section className="settings-modal" variants={dialogPanel} initial="initial" animate="animate" exit="exit" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header><div><h2 id="settings-title">设置</h2><p>{section === 'asr' ? '配置 MiMo 语音识别服务' : section === 'ai' ? '配置转写内容的 AI 对话服务' : '调整界面、文字与播放行为'}</p></div><button className="icon-button" aria-label="关闭设置" onClick={onClose}><X size={20} /></button></header>
-      <div className="settings-tabs" role="tablist"><button role="tab" aria-selected={section === 'asr'} className={section === 'asr' ? 'active' : ''} onClick={() => setSection('asr')}>语音转写</button><button role="tab" aria-selected={section === 'ai'} className={section === 'ai' ? 'active' : ''} onClick={() => setSection('ai')}>AI 服务</button><button role="tab" aria-selected={section === 'personalize'} className={section === 'personalize' ? 'active' : ''} onClick={() => setSection('personalize')}>个性化</button></div>
+      <div className="settings-tabs" role="tablist"><button role="tab" aria-selected={section === 'asr'} className={section === 'asr' ? 'active' : ''} onClick={() => setSection('asr')}>语音转写{section === 'asr' && <m.i className="settings-tab-indicator" layoutId="settings-tab-indicator" />}</button><button role="tab" aria-selected={section === 'ai'} className={section === 'ai' ? 'active' : ''} onClick={() => setSection('ai')}>AI 服务{section === 'ai' && <m.i className="settings-tab-indicator" layoutId="settings-tab-indicator" />}</button><button role="tab" aria-selected={section === 'personalize'} className={section === 'personalize' ? 'active' : ''} onClick={() => setSection('personalize')}>个性化{section === 'personalize' && <m.i className="settings-tab-indicator" layoutId="settings-tab-indicator" />}</button></div>
+      <AnimatePresence initial={false} mode="wait"><m.div key={section} className="settings-section-motion" variants={fade} initial="initial" animate="animate" exit="exit">
       {section === 'asr' ? <><div className="settings-content">
         <div className="field-label"><span>服务入口</span></div>
         <div className="service-options" role="radiogroup" aria-label="MiMo 服务入口">
@@ -147,6 +151,7 @@ export const SettingsModal = memo(function SettingsModal({ configuredServices, l
         </div>
         <footer><button className="primary-button compact" disabled={preferenceBusy || JSON.stringify(preferences) === JSON.stringify(initialPreferences)} onClick={async () => { setPreferenceBusy(true); try { await onSavePreferences(preferences); setMessage('个性化设置已保存并生效') } finally { setPreferenceBusy(false) } }}>{preferenceBusy && <LoaderCircle className="spin" size={16} />}保存并应用</button></footer>
       </>}
-    </section>
-  </div>
+      </m.div></AnimatePresence>
+    </m.section>
+  </m.div>
 })
