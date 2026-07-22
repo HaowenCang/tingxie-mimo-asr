@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -1230,8 +1230,19 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('library:delete-folder', async (_event, input: { id: string; mode: 'preserve-content' | 'delete-media' }): Promise<MediaLibrarySnapshot> => {
     const settings = await readCachedSettings()
-    const result = deleteMediaFolder(await readMediaLibrary(settings), input.id, input.mode, new Date().toISOString())
+    const current = await readMediaLibrary(settings)
+    const result = deleteMediaFolder(current, input.id, input.mode, new Date().toISOString())
+    const removedFolderIds = new Set(result.removedFolderIds)
+    const transcriptIds = (await getTranscriptStore().listSummaries())
+      .filter((item) => Boolean(item.folderId && removedFolderIds.has(item.folderId)))
+      .map((item) => item.id)
     await writeMediaLibrary(settings, result.index)
+    try {
+      if (transcriptIds.length) await getTranscriptStore().moveMany(transcriptIds, result.contentDestinationFolderId)
+    } catch (error) {
+      await writeMediaLibrary(settings, current)
+      throw error
+    }
     if (input.mode === 'delete-media') {
       const cleanup = await Promise.allSettled(result.deletedAssets.map((asset) => fs.rm(resolveManagedMediaPath(mediaLibraryRoot(settings), asset), { force: true })))
       const failedCleanupCount = cleanup.filter((item) => item.status === 'rejected').length
@@ -1256,6 +1267,17 @@ app.whenReady().then(async () => {
     const next = { ...index, assets: index.assets.filter((asset) => !idSet.has(asset.id)) }
     await writeMediaLibrary(settings, next)
     return publicMediaLibrary(settings, next)
+  })
+
+  ipcMain.handle('library:show-item', async (_event, id: string): Promise<boolean> => {
+    const settings = await readCachedSettings()
+    const asset = (await readMediaLibrary(settings)).assets.find((item) => item.id === id)
+    if (!asset) throw new Error('媒体文件不存在')
+    const file = resolveManagedMediaPath(mediaLibraryRoot(settings), asset)
+    const exists = await fs.stat(file).then((value) => value.isFile()).catch(() => false)
+    if (!exists) throw new Error('媒体文件已不在存储位置')
+    shell.showItemInFolder(file)
+    return true
   })
 
   ipcMain.handle('library:recover-history-media', async (_event, transcriptId: string): Promise<MediaLibrarySnapshot> => {
@@ -1567,6 +1589,10 @@ app.whenReady().then(async () => {
     preferences.chatFontSize = Math.min(20, Math.max(11, Number(preferences.chatFontSize) || 13))
     preferences.captionFontSize = Math.min(18, Math.max(12, Number(preferences.captionFontSize) || 12))
     preferences.chatPanelWidth = Math.min(720, Math.max(340, Number(preferences.chatPanelWidth) || 410))
+    preferences.sidebarWidth = Math.min(280, Math.max(150, Number(preferences.sidebarWidth) || 176))
+    preferences.uploadPaneHeight = Math.min(520, Math.max(180, Number(preferences.uploadPaneHeight) || 300))
+    preferences.libraryFolderWidth = Math.min(380, Math.max(170, Number(preferences.libraryFolderWidth) || 210))
+    preferences.libraryInspectorWidth = Math.min(440, Math.max(210, Number(preferences.libraryInspectorWidth) || 245))
     preferences.paragraphLength = ['compact', 'standard', 'long'].includes(preferences.paragraphLength)
       ? preferences.paragraphLength
       : 'standard'
@@ -1823,6 +1849,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('history:rename', async (_event, input: { id: string; name: string }) => {
     return getTranscriptStore().rename(input.id, input.name)
   })
+  ipcMain.handle('history:move-many', async (_event, input: { ids: string[]; folderId?: string }) => {
+    const ids = [...new Set(input.ids)]
+    if (!ids.length) return getTranscriptStore().listSummaries()
+    if (input.folderId) {
+      const settings = await readCachedSettings()
+      const library = await readMediaLibrary(settings)
+      if (!library.folders.some((folder) => folder.id === input.folderId)) throw new Error('目标文件夹不存在')
+    }
+    await getTranscriptStore().moveMany(ids, input.folderId)
+    return getTranscriptStore().listSummaries()
+  })
   ipcMain.handle('history:duplicates:inspect', async (_event, id: string) => {
     return getTranscriptStore().inspectDuplicates(id)
   })
@@ -1851,13 +1888,28 @@ app.whenReady().then(async () => {
     const normalized = sourcePath.replace(/\\/g, '/')
     return encodeURI(`file:///${normalized}`)
   })
-  ipcMain.handle('history:delete', async (_event, id: string) => {
-    await getTranscriptStore().delete(id)
+  async function deleteTranscriptRecords(ids: string[]): Promise<string[]> {
+    const deleted = await getTranscriptStore().deleteMany(ids)
+    if (!deleted.length) return []
+    const deletedSet = new Set(deleted)
     const sessions = await readChatSessions()
-    delete sessions[id]
+    for (const id of deleted) delete sessions[id]
     cachedChats = sessions
     await writeJson(chatsPath(), sessions)
-    return true
+    const settings = await readCachedSettings()
+    const library = await readMediaLibrary(settings)
+    const timestamp = new Date().toISOString()
+    const assets = library.assets.map((asset) => asset.transcriptId && deletedSet.has(asset.transcriptId)
+      ? { ...asset, transcriptId: undefined, transcriptStatus: 'untranscribed' as const, updatedAt: timestamp }
+      : asset)
+    if (assets.some((asset, index) => asset !== library.assets[index])) await writeMediaLibrary(settings, { ...library, assets })
+    return deleted
+  }
+  ipcMain.handle('history:delete-many', async (_event, ids: string[]) => {
+    return deleteTranscriptRecords(ids)
+  })
+  ipcMain.handle('history:delete', async (_event, id: string) => {
+    return (await deleteTranscriptRecords([id])).length > 0
   })
 
   ipcMain.handle('transcript:export', async (_event, result: TranscriptResult) => {

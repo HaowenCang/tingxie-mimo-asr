@@ -95,6 +95,36 @@ describe('split transcript store migration', () => {
     expect((await store.listSummaries())[0].fileName).toBe('项目周会.m4a')
   })
 
+  it('moves multiple text-only transcripts into a folder without changing their content', async () => {
+    const first = record('first', '第一份纯文字转写')
+    const second = record('second', '第二份纯文字转写')
+    const { store } = await fixture([first, second])
+
+    const summaries = await store.moveMany(['first', 'second'], 'folder-research')
+
+    expect(summaries.map((item) => [item.id, item.folderId])).toEqual([
+      ['first', 'folder-research'],
+      ['second', 'folder-research'],
+    ])
+    expect(await store.get('first')).toEqual({ ...first, folderId: 'folder-research' })
+    expect(await store.get('second')).toEqual({ ...second, folderId: 'folder-research' })
+
+    const ungrouped = await store.moveMany(['first'], undefined)
+    expect(ungrouped[0].folderId).toBeUndefined()
+    expect((await store.get('first'))?.text).toBe(first.text)
+  })
+
+  it('deletes multiple transcript records while keeping unselected records readable', async () => {
+    const { store } = await fixture([record('first', '删除一'), record('second', '保留'), record('third', '删除三')])
+
+    const deleted = await store.deleteMany(['first', 'third', 'missing'])
+
+    expect(deleted).toEqual(['first', 'third'])
+    expect((await store.listSummaries()).map((item) => item.id)).toEqual(['second'])
+    expect((await store.get('second'))?.text).toBe('保留')
+    expect(await store.get('first')).toBeUndefined()
+  })
+
   it('backs up, repairs and restores a transcript with consecutive duplicate segments', async () => {
     const repeated = '这是一段足够长的脱敏测试内容，用于验证历史转写重复修复会先创建独立备份并且能够完整撤销。'
     const original: TranscriptResult = {
