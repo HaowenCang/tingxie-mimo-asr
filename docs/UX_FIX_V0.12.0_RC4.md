@@ -4,11 +4,13 @@
 
 ## 状态
 
-- 🟡 实现与首轮 Windows CI 已通过，等待状态提交 CI、合并与发布
-- 分支：`codex/library-context-resizable-rc4`
+- 🟢 已完成并发布 GitHub prerelease
+- 实现分支：`codex/library-context-resizable-rc4`
 - 回退基线：`main` / `8e5a00a`
 - 实现提交：`d7328b0`
 - Pull Request：[PR #19](https://github.com/HaowenCang/tingxie-mimo-asr/pull/19)
+- 合并提交：`cda9ad8`
+- 发布工作流：[`29912720848`](https://github.com/HaowenCang/tingxie-mimo-asr/actions/runs/29912720848)
 - 目标版本：`v0.12.0-rc.4`
 
 ## 已批准范围
@@ -39,7 +41,8 @@
 - [x] 141/141 测试、TypeScript、Vite/Electron 和生产依赖审计通过。
 - [x] NSIS、隔离用户目录的解包版启动与安装包校验通过。
 - [x] 独立 PR 与首轮 Windows `test-and-build` 通过（1m28s）。
-- [ ] 状态提交 CI、PR 合并、注释标签与 GitHub prerelease。
+- [x] 状态提交 Windows `test-and-build` 通过（1m26s），PR #19 已 squash merge。
+- [x] 注释标签、Windows Runner NSIS/SHA 校验与 GitHub prerelease 已完成。
 
 ## 本地验收证据
 
@@ -57,3 +60,12 @@
 - `win-unpacked` 使用隔离临时用户目录启动成功；测试进程已精确终止。
 - 随包 FFmpeg、FFprobe x64 均存在。
 - 未配置商业代码签名；构建日志明确跳过签名。
+
+## GitHub RC4 产物
+
+- Release：[v0.12.0-rc.4](https://github.com/HaowenCang/tingxie-mimo-asr/releases/tag/v0.12.0-rc.4)
+- 文件：`Tingxie-0.12.0-rc.4-Setup.exe`
+- 大小：197,417,931 B
+- SHA-256：`CD8AE1EF3AAA74748C06482C88D875C61D668D7E234DB016137F1DCE70192AE9`
+- Release 为非草稿 prerelease；安装包摘要与 Runner 生成的 SHA 清单一致。
+- 本机与 Runner 的 NSIS 哈希可能因构建时间等非确定性元数据不同；公开校验以 GitHub Release 中的 Runner 产物为准。
