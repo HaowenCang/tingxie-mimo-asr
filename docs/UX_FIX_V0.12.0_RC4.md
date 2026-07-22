@@ -4,9 +4,11 @@
 
 ## 状态
 
-- 🟡 本地实现与验证完成，等待 PR/CI/发布
+- 🟡 实现与首轮 Windows CI 已通过，等待状态提交 CI、合并与发布
 - 分支：`codex/library-context-resizable-rc4`
 - 回退基线：`main` / `8e5a00a`
+- 实现提交：`d7328b0`
+- Pull Request：[PR #19](https://github.com/HaowenCang/tingxie-mimo-asr/pull/19)
 - 目标版本：`v0.12.0-rc.4`
 
 ## 已批准范围
@@ -36,7 +38,8 @@
 - [x] 键盘调整、右键菜单、窗口边缘避让和自动紧凑布局验收。
 - [x] 141/141 测试、TypeScript、Vite/Electron 和生产依赖审计通过。
 - [x] NSIS、隔离用户目录的解包版启动与安装包校验通过。
-- [ ] 独立 PR、Windows CI、注释标签与 GitHub prerelease。
+- [x] 独立 PR 与首轮 Windows `test-and-build` 通过（1m28s）。
+- [ ] 状态提交 CI、PR 合并、注释标签与 GitHub prerelease。
 
 ## 本地验收证据
 
