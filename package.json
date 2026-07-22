@@ -1,6 +1,6 @@
 {
   "name": "tingxie-mimo-asr",
-  "version": "0.12.0-rc.3",
+  "version": "0.12.0-rc.4",
   "description": "A Windows desktop transcription client for Xiaomi MiMo ASR",
   "main": "dist-electron/main.cjs",
   "type": "module",
@@ -13,6 +13,7 @@
     "perf:bench": "vitest bench --run src/performance.bench.tsx"
   },
   "dependencies": {
+    "@radix-ui/react-context-menu": "^2.3.4",
     "@radix-ui/react-select": "^2.3.4",
     "@tanstack/react-virtual": "^3.14.6",
     "ffmpeg-static": "^5.2.0",

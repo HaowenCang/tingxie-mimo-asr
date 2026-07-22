@@ -113,6 +113,18 @@ export class TranscriptStore {
     return updated
   }
 
+  async moveMany(ids: string[], folderId?: string): Promise<TranscriptSummary[]> {
+    const uniqueIds = [...new Set(ids)]
+    const moved: TranscriptSummary[] = []
+    for (const id of uniqueIds) {
+      const result = await this.get(id)
+      if (!result) throw new Error('未找到待移动的转写记录')
+      const updated: TranscriptResult = { ...result, folderId }
+      moved.push(await this.save(updated))
+    }
+    return moved
+  }
+
   async inspectDuplicates(id: string): Promise<TranscriptDuplicateReport & { canUndo: boolean }> {
     const result = await this.get(id)
     if (!result) throw new Error('未找到该转写记录')
@@ -153,13 +165,23 @@ export class TranscriptStore {
   }
 
   async delete(id: string): Promise<boolean> {
+    return (await this.deleteMany([id])).length > 0
+  }
+
+  async deleteMany(ids: string[]): Promise<string[]> {
     await this.initialize()
-    if (!this.index!.records.some((item) => item.id === id)) return false
-    const nextIndex: TranscriptIndexFile = { ...this.index!, records: this.index!.records.filter((item) => item.id !== id) }
+    const requested = new Set(ids)
+    const deleted = this.index!.records.filter((item) => requested.has(item.id)).map((item) => item.id)
+    if (!deleted.length) return []
+    const deletedSet = new Set(deleted)
+    const nextIndex: TranscriptIndexFile = { ...this.index!, records: this.index!.records.filter((item) => !deletedSet.has(item.id)) }
     await writeJsonAtomic(this.indexFile, nextIndex)
     this.index = nextIndex
-    await fs.rm(this.recordPath(id), { force: true })
-    return true
+    await Promise.all(deleted.flatMap((id) => [
+      fs.rm(this.recordPath(id), { force: true }),
+      fs.rm(this.duplicateBackupPath(id), { force: true }),
+    ]))
+    return deleted
   }
 
   private initialize(): Promise<void> {

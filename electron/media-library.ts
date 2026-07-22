@@ -204,6 +204,8 @@ export function moveMediaFolder(
 export interface DeleteMediaFolderResult {
   index: MediaLibraryIndex
   deletedAssets: MediaAsset[]
+  removedFolderIds: string[]
+  contentDestinationFolderId?: string
 }
 
 export function deleteMediaFolder(
@@ -221,6 +223,8 @@ export function deleteMediaFolder(
     const deletedAssetIds = new Set(deletedAssets.map((asset) => asset.id))
     return {
       deletedAssets,
+      removedFolderIds: [...removedFolderIds],
+      contentDestinationFolderId: folder.parentId,
       index: {
         ...index,
         folders: index.folders.filter((item) => !removedFolderIds.has(item.id)),
@@ -235,6 +239,8 @@ export function deleteMediaFolder(
   }
   return {
     deletedAssets: [],
+    removedFolderIds: [id],
+    contentDestinationFolderId: folder.parentId,
     index: {
       ...index,
       folders: index.folders

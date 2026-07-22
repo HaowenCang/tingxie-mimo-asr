@@ -17,6 +17,7 @@ interface GlassSelectProps {
   placeholder?: string
   disabled?: boolean
   className?: string
+  contentClassName?: string
   size?: 'compact' | 'regular'
 }
 
@@ -28,6 +29,7 @@ export const GlassSelect = memo(function GlassSelect({
   placeholder = '请选择',
   disabled = false,
   className = '',
+  contentClassName = '',
   size = 'regular',
 }: GlassSelectProps) {
   const selected = options.find((option) => option.value === value)
@@ -37,7 +39,7 @@ export const GlassSelect = memo(function GlassSelect({
       <Select.Icon className="glass-select-chevron"><ChevronDown size={15} /></Select.Icon>
     </Select.Trigger>
     <Select.Portal>
-      <Select.Content className="glass-select-content" position="popper" sideOffset={6} collisionPadding={12}>
+      <Select.Content className={`glass-select-content ${contentClassName}`.trim()} position="popper" sideOffset={6} collisionPadding={12}>
         <Select.ScrollUpButton className="glass-select-scroll"><ChevronUp size={14} /></Select.ScrollUpButton>
         <Select.Viewport className="glass-select-viewport">
           {options.map((option) => <Select.Item

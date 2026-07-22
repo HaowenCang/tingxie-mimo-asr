@@ -91,6 +91,8 @@ describe('managed media library', () => {
     const result = deleteMediaFolder(index, 'deleted', 'preserve-content', 'later')
 
     expect(result.deletedAssets).toEqual([])
+    expect(result.removedFolderIds).toEqual(['deleted'])
+    expect(result.contentDestinationFolderId).toBe('parent')
     expect(result.index.folders.map((folder) => [folder.id, folder.parentId])).toEqual([
       ['parent', undefined],
       ['child', 'parent'],
@@ -132,6 +134,8 @@ describe('managed media library', () => {
     expect(result.index.folders.map((folder) => folder.id)).toEqual(['kept'])
     expect(result.index.assets.map((asset) => asset.id)).toEqual(['kept-asset'])
     expect(result.deletedAssets.map((asset) => asset.id)).toEqual(['deleted-asset'])
+    expect(new Set(result.removedFolderIds)).toEqual(new Set(['deleted', 'child']))
+    expect(result.contentDestinationFolderId).toBeUndefined()
   })
 
   it('deduplicates a large import batch by a stable source signature', async () => {

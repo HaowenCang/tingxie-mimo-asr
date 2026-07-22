@@ -78,22 +78,29 @@ export function buildMediaLibraryIndex(library: MediaLibrarySnapshot, history: T
   const historySearchText = new Map<string, string>()
   let unfiledCount = 0
 
+  function countFolderItem(folderId: string | undefined) {
+    if (!folderId) {
+      unfiledCount += 1
+      return
+    }
+    const visited = new Set<string>()
+    let currentId: string | undefined = folderId
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId)
+      folderCounts.set(currentId, (folderCounts.get(currentId) || 0) + 1)
+      currentId = folderById.get(currentId)?.parentId
+    }
+  }
+
   for (const asset of library.assets) {
     assetById.set(asset.id, asset)
     if (asset.transcriptId) linkedTranscriptIds.add(asset.transcriptId)
-    if (asset.folderId) {
-      const visited = new Set<string>()
-      let folderId: string | undefined = asset.folderId
-      while (folderId && !visited.has(folderId)) {
-        visited.add(folderId)
-        folderCounts.set(folderId, (folderCounts.get(folderId) || 0) + 1)
-        folderId = folderById.get(folderId)?.parentId
-      }
-    } else unfiledCount += 1
+    countFolderItem(asset.folderId)
     assetSearchText.set(asset.id, `${asset.displayName}\0${asset.originalName}\0${asset.extension}`.toLocaleLowerCase())
   }
   for (const transcript of history) {
     historySearchText.set(transcript.id, `${transcript.fileName}\0${transcript.preview}`.toLocaleLowerCase())
+    if (!linkedTranscriptIds.has(transcript.id)) countFolderItem(transcript.folderId)
   }
 
   return {
@@ -137,7 +144,13 @@ export function filterMediaLibraryRows(
     }
   }
 
-  const history = scope.kind === 'history' ? index.history : scope.kind === 'all' ? index.unlinkedHistory : []
+  const history = scope.kind === 'history'
+    ? index.history
+    : scope.kind === 'all'
+      ? index.unlinkedHistory
+      : scope.kind === 'unfiled'
+        ? index.unlinkedHistory.filter((item) => !item.folderId)
+        : index.unlinkedHistory.filter((item) => Boolean(folderScopeId && item.folderId && index.folderDescendantIds.get(folderScopeId)?.has(item.folderId)))
   for (const transcript of history) {
     if (status !== 'all' && transcriptStatus(transcript) !== status) continue
     if (normalizedQuery && !index.historySearchText.get(transcript.id)?.includes(normalizedQuery)) continue

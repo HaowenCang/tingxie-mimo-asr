@@ -1,6 +1,6 @@
 import { CheckCircle2, ExternalLink, Eye, EyeOff, FolderCog, KeyRound, LoaderCircle, ShieldCheck, X } from 'lucide-react'
 import { memo, useState } from 'react'
-import type { AIProvider, AISettings, AppPreferences, Language, ServiceMode } from '../../electron/types'
+import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type ServiceMode } from '../../electron/types'
 import { AIProviderSettings } from './AIProviderSettings'
 import { GlassSelect } from './GlassSelect'
 
@@ -125,6 +125,7 @@ export const SettingsModal = memo(function SettingsModal({ configuredServices, l
             <label><span>新转写段落长度</span><GlassSelect ariaLabel="新转写段落长度" className="settings-select" value={preferences.paragraphLength} options={[{ value: 'compact', label: '紧凑 · 2–3 句' }, { value: 'standard', label: '标准 · 3–6 句' }, { value: 'long', label: '长段落 · 5–9 句' }]} onValueChange={(paragraphLength) => setPreferences({ ...preferences, paragraphLength: paragraphLength as AppPreferences['paragraphLength'] })} /></label>
             <label><span>内容密度</span><GlassSelect ariaLabel="内容密度" className="settings-select" value={preferences.density} options={[{ value: 'comfortable', label: '舒适' }, { value: 'compact', label: '紧凑' }]} onValueChange={(density) => setPreferences({ ...preferences, density: density as AppPreferences['density'] })} /></label>
           </div></section>
+          <section className="preference-group"><div className="preference-group-heading"><strong>工作区布局</strong><span>主区域可直接拖动分隔线；小窗口会自动采用紧凑布局</span></div><div className="layout-preference-summary"><span>侧栏 {preferences.sidebarWidth}px</span><span>上传区 {preferences.uploadPaneHeight}px</span><span>文件夹栏 {preferences.libraryFolderWidth}px</span><span>详情栏 {preferences.libraryInspectorWidth}px</span><button className="soft-button" onClick={() => setPreferences({ ...preferences, sidebarWidth: DEFAULT_APP_PREFERENCES.sidebarWidth, uploadPaneHeight: DEFAULT_APP_PREFERENCES.uploadPaneHeight, libraryFolderWidth: DEFAULT_APP_PREFERENCES.libraryFolderWidth, libraryInspectorWidth: DEFAULT_APP_PREFERENCES.libraryInspectorWidth, chatPanelWidth: DEFAULT_APP_PREFERENCES.chatPanelWidth })}>恢复默认布局</button></div></section>
           <section className="preference-group"><div className="preference-group-heading"><strong>播放与校对</strong><span>控制音频播放、跳转和自动跟随</span></div><div className="preferences-grid">
             <label><span>默认倍速</span><GlassSelect ariaLabel="默认倍速" className="settings-select" value={String(preferences.defaultPlaybackRate)} options={numberOptions([0.75, 1, 1.25, 1.5, 2], 'x')} onValueChange={(value) => setPreferences({ ...preferences, defaultPlaybackRate: Number(value) })} /></label>
             <label><span>默认音量 <b>{Math.round(preferences.defaultVolume * 100)}%</b></span><input type="range" min="0" max="1" step="0.05" value={preferences.defaultVolume} onChange={(event) => setPreferences({ ...preferences, defaultVolume: Number(event.target.value) })} /></label>

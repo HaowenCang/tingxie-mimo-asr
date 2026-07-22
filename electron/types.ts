@@ -120,6 +120,7 @@ export interface TranscriptAnalysis {
 export interface TranscriptResult {
   id: string
   revision?: number
+  folderId?: string
   fileName: string
   createdAt: string
   text: string
@@ -136,6 +137,7 @@ export interface TranscriptResult {
 
 export interface TranscriptSummary {
   id: string
+  folderId?: string
   fileName: string
   createdAt: string
   duration: number
@@ -173,6 +175,10 @@ export interface AppPreferences {
   smartFontSize: number
   chatFontSize: number
   chatPanelWidth: number
+  sidebarWidth: number
+  uploadPaneHeight: number
+  libraryFolderWidth: number
+  libraryInspectorWidth: number
   captionFontSize: number
   sidebarCollapsed: boolean
   paragraphLength: ParagraphLength
@@ -198,6 +204,10 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   smartFontSize: 12,
   chatFontSize: 13,
   chatPanelWidth: 410,
+  sidebarWidth: 176,
+  uploadPaneHeight: 300,
+  libraryFolderWidth: 210,
+  libraryInspectorWidth: 245,
   captionFontSize: 12,
   sidebarCollapsed: false,
   paragraphLength: 'standard',

@@ -18,9 +18,10 @@ function asset(index: number, folderId?: string): MediaAsset {
   }
 }
 
-function summary(index: number): TranscriptSummary {
+function summary(index: number, folderId?: string): TranscriptSummary {
   return {
     id: `transcript-${index}`,
+    ...(folderId ? { folderId } : {}),
     fileName: `Legacy ${index}.wav`,
     createdAt: '2026-07-19T00:00:00.000Z',
     duration: 60,
@@ -52,7 +53,7 @@ describe('media library derived index', () => {
     const index = buildMediaLibraryIndex(library, history)
 
     expect(index.assetById.size).toBe(10_000)
-    expect(index.unfiledCount).toBe(1_000)
+    expect(index.unfiledCount).toBe(1_050)
     expect([...index.folderCounts.values()].reduce((total, count) => total + count, 0)).toBe(9_000)
     expect(index.unlinkedHistory).toHaveLength(50)
   })
@@ -97,5 +98,23 @@ describe('media library derived index', () => {
     expect(index.folderCounts.get('parent')).toBe(2)
     expect(index.folderCounts.get('child')).toBe(1)
     expect(filterMediaLibraryRows(index, { kind: 'folder', folderId: 'parent' }, 'all', '').map((row) => row.id)).toEqual(['asset-1', 'asset-2'])
+  })
+
+  it('treats text-only transcripts as movable library items in folders and unfiled', () => {
+    const library: MediaLibrarySnapshot = {
+      rootPath: 'D:/library',
+      folders: [
+        { id: 'parent', name: 'Parent', createdAt: 'now', updatedAt: 'now' },
+        { id: 'child', name: 'Child', parentId: 'parent', createdAt: 'now', updatedAt: 'now' },
+      ],
+      assets: [],
+    }
+    const index = buildMediaLibraryIndex(library, [summary(1, 'child'), summary(2)])
+
+    expect(index.folderCounts.get('parent')).toBe(1)
+    expect(index.folderCounts.get('child')).toBe(1)
+    expect(index.unfiledCount).toBe(1)
+    expect(filterMediaLibraryRows(index, { kind: 'folder', folderId: 'parent' }, 'all', '').map((row) => row.id)).toEqual(['transcript-1'])
+    expect(filterMediaLibraryRows(index, { kind: 'unfiled' }, 'all', '').map((row) => row.id)).toEqual(['transcript-2'])
   })
 })

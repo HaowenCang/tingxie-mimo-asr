@@ -4,6 +4,8 @@ import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPref
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { summarizeTranscript } from '../electron/transcript-summary'
 import { QueuePanel } from './components/QueuePanel'
+import { LayoutResizeHandle } from './components/LayoutResizeHandle'
+import { clampLayoutValue, DEFAULT_SIDEBAR_WIDTH, DEFAULT_UPLOAD_PANE_HEIGHT } from './components/layout-resize'
 import { clampChatPanelWidth, DEFAULT_CHAT_PANEL_WIDTH, PanelResizeHandle } from './components/PanelResizeHandle'
 import { Sidebar } from './components/Sidebar'
 import { addRecentTranscript } from './components/recent-transcripts'
@@ -150,6 +152,8 @@ export function App() {
   const [analysisBusy, setAnalysisBusy] = useState(false)
   const [analysisError, setAnalysisError] = useState(isDemo && demoParameters.has('analysis-error') ? 'AI 返回的 JSON 格式无效；已自动修复重试 1 次，请稍后重试。' : '')
   const [chatPanelWidth, setChatPanelWidth] = useState(DEFAULT_CHAT_PANEL_WIDTH)
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
+  const [uploadPaneHeight, setUploadPaneHeight] = useState(DEFAULT_UPLOAD_PANE_HEIGHT)
   const [shellWidth, setShellWidth] = useState(() => window.innerWidth)
   const shellRef = useRef<HTMLDivElement>(null)
   const preferredChatPanelWidth = useRef(DEFAULT_CHAT_PANEL_WIDTH)
@@ -192,6 +196,11 @@ export function App() {
     root.style.setProperty('--glass-saturation', `${115 + preferences.glassStrength * 0.7}%`)
     root.style.setProperty('--glass-edge-opacity', `${0.5 + preferences.glassStrength / 200}`)
   }, [settings.preferences])
+
+  useEffect(() => {
+    setSidebarWidth(settings.preferences.sidebarWidth)
+    setUploadPaneHeight(settings.preferences.uploadPaneHeight)
+  }, [settings.preferences.sidebarWidth, settings.preferences.uploadPaneHeight])
 
   useEffect(() => {
     if (!(isDemo && demoParameters.has('analysis-error'))) setAnalysisError('')
@@ -371,6 +380,11 @@ export function App() {
     if (normalized !== settings.preferences.chatPanelWidth) void savePreferences({ ...settings.preferences, chatPanelWidth: normalized }).catch(() => undefined)
   }
 
+  function commitPrimaryLayout(key: 'sidebarWidth' | 'uploadPaneHeight', value: number) {
+    if (settings.preferences[key] === value) return
+    void savePreferences({ ...settings.preferences, [key]: value }).catch(() => undefined)
+  }
+
   const updateResult = useCallback((result: TranscriptResult, persist = true) => {
     setSelectedResult(result)
     setFiles((current) => current.map((file) => file.id === result.id ? { ...file, result } : file))
@@ -445,12 +459,15 @@ export function App() {
     <div
       ref={shellRef}
       className={`${chatOpen && selectedResult && currentPage === 'new' ? 'app-shell chat-open' : 'app-shell'}${selectedResult && currentPage === 'new' ? ' detail-open' : ''}${currentPage === 'new' && !selectedResult ? ' new-transcript-mode' : ''}${settings.preferences.sidebarCollapsed ? ' sidebar-is-collapsed' : ''}`}
-      style={{ '--chat-panel-width': `${chatPanelWidth}px` } as CSSProperties}
+      style={{ '--chat-panel-width': `${chatPanelWidth}px`, '--sidebar-width': `${sidebarWidth}px`, '--upload-pane-height': `${uploadPaneHeight}px` } as CSSProperties}
     >
       <Sidebar current={currentPage} collapsed={settings.preferences.sidebarCollapsed} onToggle={() => void savePreferences({ ...settings.preferences, sidebarCollapsed: !settings.preferences.sidebarCollapsed })} onNavigate={navigate} onSettings={() => { setSettingsSection('asr'); setShowSettings(true) }} recentTranscripts={recentTranscripts} activeTranscriptId={selectedResult?.id} onOpenTranscript={(item) => void openTranscript(item)} onRemoveRecent={(id) => setRecentTranscripts((current) => current.filter((item) => item.id !== id))} />
+      {!settings.preferences.sidebarCollapsed && shellWidth > 1220 && <LayoutResizeHandle className="sidebar-layout-resizer" label="调整主导航宽度" orientation="vertical" value={sidebarWidth} min={150} max={280} onResize={(value) => setSidebarWidth(clampLayoutValue('sidebar', value, shellWidth))} onCommit={(value) => commitPrimaryLayout('sidebarWidth', clampLayoutValue('sidebar', value, shellWidth))} onReset={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); commitPrimaryLayout('sidebarWidth', DEFAULT_SIDEBAR_WIDTH) }} />}
       {currentPage === 'library' ? <Suspense fallback={<DeferredView className="history-view deferred-view" label="正在打开媒体库" />}><MediaLibraryView
         library={mediaLibrary}
         history={history}
+        preferences={settings.preferences}
+        onPreferencesChange={savePreferences}
         onHistoryChange={updateHistorySummaries}
         importProgress={mediaImportProgress}
         onLibraryChange={setMediaLibrary}
@@ -472,6 +489,7 @@ export function App() {
             </div>
           </header>
           <UploadZone onSelect={chooseFiles} onDrop={dropFiles} />
+          <LayoutResizeHandle className="upload-layout-resizer" label="调整上传区域高度" orientation="horizontal" value={uploadPaneHeight} min={180} max={Math.max(180, (shellRef.current?.clientHeight || 720) - 290)} onResize={(value) => setUploadPaneHeight(clampLayoutValue('upload', value, shellRef.current?.clientHeight || 720))} onCommit={(value) => commitPrimaryLayout('uploadPaneHeight', clampLayoutValue('upload', value, shellRef.current?.clientHeight || 720))} onReset={() => { setUploadPaneHeight(DEFAULT_UPLOAD_PANE_HEIGHT); commitPrimaryLayout('uploadPaneHeight', DEFAULT_UPLOAD_PANE_HEIGHT) }} />
           <QueuePanel
             files={files}
             selectedId={undefined}

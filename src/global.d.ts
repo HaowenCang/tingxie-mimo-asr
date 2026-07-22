@@ -18,6 +18,7 @@ declare global {
       renameMediaAsset(id: string, name: string): Promise<MediaLibrarySnapshot>
       moveMediaAssets(ids: string[], folderId?: string): Promise<MediaLibrarySnapshot>
       deleteMediaAssets(ids: string[]): Promise<MediaLibrarySnapshot>
+      showMediaItem(id: string): Promise<boolean>
       recoverHistoryMedia(transcriptId: string): Promise<MediaLibrarySnapshot>
       chooseMediaLibraryRoot(): Promise<MediaLibrarySnapshot | undefined>
       cancel(id: string): Promise<boolean>
@@ -43,11 +44,13 @@ declare global {
       updateHistory(result: TranscriptResult): Promise<TranscriptSummary>
       patchTranscriptSegment(input: { transcriptId: string; segmentId: string; patch: Partial<TranscriptResult['segments'][number]> }): Promise<TranscriptSummary>
       renameTranscript(id: string, name: string): Promise<TranscriptResult>
+      moveTranscripts(ids: string[], folderId?: string): Promise<TranscriptSummary[]>
       inspectTranscriptDuplicates(id: string): Promise<TranscriptDuplicateReport>
       repairTranscriptDuplicates(id: string): Promise<TranscriptDuplicateRepairResult>
       undoTranscriptDuplicateRepair(id: string): Promise<TranscriptResult>
       getMediaUrl(transcriptId: string): Promise<string>
       deleteHistory(id: string): Promise<boolean>
+      deleteTranscripts(ids: string[]): Promise<string[]>
       copyText(text: string): Promise<boolean>
       exportTranscript(result: TranscriptResult): Promise<boolean>
     }

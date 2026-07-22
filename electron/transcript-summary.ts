@@ -3,6 +3,7 @@ import type { TranscriptResult, TranscriptSummary } from './types'
 export function summarizeTranscript(result: TranscriptResult): TranscriptSummary {
   return {
     id: result.id,
+    folderId: result.folderId,
     fileName: result.fileName,
     createdAt: result.createdAt,
     duration: result.duration,
