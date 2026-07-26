@@ -6,7 +6,7 @@
 
 - 实现版本：`v0.12.0-rc.6`
 - 实现分支：`codex/feat-batch-transcription-pipeline`
-- 状态：实现、界面验收、本地安装包验证和首轮 Windows CI 已完成；PR #22 等待最终状态提交门禁与合并
+- 状态：实现、界面验收、本地安装包验证和两轮 Windows CI 已完成；通过 PR #22 交付
 - 实现提交：`0e731e0`
 - GitHub PR：[#22](https://github.com/HaowenCang/tingxie-mimo-asr/pull/22)
 
@@ -80,5 +80,5 @@ API 层只允许一个媒体处于转写状态。后续媒体即使更早完成�
 - 安装包：`release/Tingxie-0.12.0-rc.6-Setup.exe`，198,719,764 B。
 - SHA-256：`2AEEC47F3D8236CDAE12C0401DFA79290C1A8A0522F1424C5FFE793350042248`。
 - 解包版使用隔离用户目录启动成功；FFmpeg 与 x64 FFprobe 均存在于发行资源目录。
-- GitHub Windows `test-and-build` 首轮通过（1m22s）。
+- GitHub Windows `test-and-build` 两轮通过（1m22s、1m23s）。
 - 当前安装包未配置商业代码签名，Windows 可能显示未知发布者。
