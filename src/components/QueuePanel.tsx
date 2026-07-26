@@ -28,6 +28,9 @@ export const QueuePanel = memo(function QueuePanel({ files, selectedId, onSelect
   const followRef = useRef(true)
   const [following, setFollowing] = useState(true)
   const [expandedDetails, setExpandedDetails] = useState<Set<string>>(() => new Set())
+  const preparingCount = files.filter((file) => ['preparing', 'extracting'].includes(file.status)).length
+  const waitingApiCount = files.filter((file) => ['ready', 'waiting-api'].includes(file.status)).length
+  const transcribingCount = files.filter((file) => file.status === 'transcribing').length
   const scrollBehavior = () => motionPreference(document.documentElement.dataset.reducedMotion === 'true').scrollBehavior
 
   useEffect(() => {
@@ -41,18 +44,18 @@ export const QueuePanel = memo(function QueuePanel({ files, selectedId, onSelect
   function resumeFollowing() {
     followRef.current = true
     setFollowing(true)
-    const active = [...files].reverse().find((file) => ['preparing', 'extracting', 'transcribing'].includes(file.status)) || files.at(-1)
+    const active = [...files].reverse().find((file) => ['waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing'].includes(file.status)) || files.at(-1)
     if (active) rowRefs.current.get(active.id)?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
   }
 
   return (
     <section className="queue-section">
-      <div className="section-heading"><div><h2>转写队列</h2><p>新加入的文件会在这里显示处理状态</p></div><span>{files.length} 个文件</span></div>
+      <div className="section-heading"><div><h2>转写队列</h2><p>本地音频可并行准备，API 按媒体顺序转写</p></div><span>{files.length} 个文件{preparingCount ? ` · 本地 ${preparingCount}` : ''}{transcribingCount ? ` · API ${transcribingCount}` : ''}{waitingApiCount ? ` · 待 API ${waitingApiCount}` : ''}</span></div>
       <div ref={listRef} className="queue-list" onScroll={(event) => { const nearBottom = isNearQueueBottom(event.currentTarget); followRef.current = nearBottom; setFollowing(nearBottom) }}>
         <AnimatePresence initial={false} mode="popLayout">
         {!files.length && <m.div key="queue-empty" variants={listItem} initial="initial" animate="animate" exit="exit" className="queue-empty"><span><ListMusic size={27} /></span><strong>队列中还没有任务</strong><p>选择或拖入音视频文件后，可在这里查看进度与重试失败任务。</p></m.div>}
         {files.map((file, index) => {
-          const active = ['preparing', 'extracting', 'transcribing'].includes(file.status)
+          const active = ['waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing'].includes(file.status)
           return (
             <m.article
               layout
@@ -81,8 +84,8 @@ export const QueuePanel = memo(function QueuePanel({ files, selectedId, onSelect
               <div className="row-actions">
                 <AnimatePresence initial={false}>{(file.status === 'done' || file.status === 'partial') && <m.span key={file.status} variants={iconSwap} initial="initial" animate="animate" exit="exit" className={file.status === 'partial' ? 'done-mark partial' : 'done-mark'} aria-label={file.status === 'partial' ? '部分完成' : '完成'}><Check size={16} /></m.span>}</AnimatePresence>
                 {active && <button aria-label="取消任务" onClick={(event) => { event.stopPropagation(); onCancel(file) }}><Square size={15} /></button>}
-                {file.status === 'error' && <button aria-label="重试" onClick={(event) => { event.stopPropagation(); onRetry(file) }}><RotateCcw size={16} /></button>}
-                {['waiting', 'done', 'partial', 'error', 'cancelled'].includes(file.status) && <button aria-label="移除" onClick={(event) => { event.stopPropagation(); onRemove(file) }}><X size={17} /></button>}
+                {['error', 'interrupted'].includes(file.status) && <button aria-label="重试" onClick={(event) => { event.stopPropagation(); onRetry(file) }}><RotateCcw size={16} /></button>}
+                {['waiting', 'done', 'partial', 'error', 'cancelled', 'interrupted'].includes(file.status) && <button aria-label="移除" onClick={(event) => { event.stopPropagation(); onRemove(file) }}><X size={17} /></button>}
                 <MoreHorizontal className="more-glyph" size={19} />
               </div>
             </m.article>

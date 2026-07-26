@@ -1,4 +1,4 @@
-import type { AISettings, MediaLibrarySnapshot, TranscriptSummary } from '../electron/types'
+import type { AISettings, MediaLibrarySnapshot, PendingTranscriptionJob, TranscriptSummary } from '../electron/types'
 import type { AppSettings } from './types'
 
 export interface StartupDataApi {
@@ -6,6 +6,7 @@ export interface StartupDataApi {
   getHistory(): Promise<TranscriptSummary[]>
   getAISettings(): Promise<AISettings>
   getMediaLibrary(): Promise<MediaLibrarySnapshot>
+  getPendingTranscriptionQueue(): Promise<PendingTranscriptionJob[]>
 }
 
 export interface StartupData {
@@ -13,16 +14,18 @@ export interface StartupData {
   history?: TranscriptSummary[]
   aiSettings?: AISettings
   mediaLibrary?: MediaLibrarySnapshot
-  errors: Array<{ resource: 'settings' | 'history' | 'aiSettings' | 'mediaLibrary'; error: unknown }>
+  pendingTranscriptions?: PendingTranscriptionJob[]
+  errors: Array<{ resource: 'settings' | 'history' | 'aiSettings' | 'mediaLibrary' | 'pendingTranscriptions'; error: unknown }>
 }
 
 export async function loadStartupData(api: StartupDataApi): Promise<StartupData> {
-  const resources = ['settings', 'history', 'aiSettings', 'mediaLibrary'] as const
+  const resources = ['settings', 'history', 'aiSettings', 'mediaLibrary', 'pendingTranscriptions'] as const
   const settled = await Promise.allSettled([
     api.getSettings(),
     api.getHistory(),
     api.getAISettings(),
     api.getMediaLibrary(),
+    api.getPendingTranscriptionQueue(),
   ])
   const result: StartupData = { errors: [] }
   settled.forEach((entry, index) => {
@@ -35,6 +38,7 @@ export async function loadStartupData(api: StartupDataApi): Promise<StartupData>
     if (resource === 'history') result.history = entry.value as TranscriptSummary[]
     if (resource === 'aiSettings') result.aiSettings = entry.value as AISettings
     if (resource === 'mediaLibrary') result.mediaLibrary = entry.value as MediaLibrarySnapshot
+    if (resource === 'pendingTranscriptions') result.pendingTranscriptions = entry.value as PendingTranscriptionJob[]
   })
   return result
 }

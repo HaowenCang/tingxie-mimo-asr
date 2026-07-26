@@ -25,13 +25,17 @@ export function statusLabel(status: string, detail?: string): string {
   if (detail) return detail
   return ({
     waiting: '等待转写',
+    'waiting-preparation': '等待本地准备',
     preparing: '正在分析媒体',
     extracting: '正在提取音频',
+    ready: '音频已准备',
+    'waiting-api': '等待 API 转写',
     transcribing: '正在转写',
     done: '转写完成',
     partial: '转写完成，存在失败片段',
     error: '转写失败',
     cancelled: '已取消',
+    interrupted: '上次任务已中断',
   } as Record<string, string>)[status] || status
 }
 

@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from '../electron/types'
 
 declare global {
   interface Window {
@@ -6,7 +6,12 @@ declare global {
       openFiles(): Promise<SelectedMedia[]>
       getPathForFile(file: File): string
       probeMedia(path: string): Promise<MediaInfo>
-      transcribe(input: { id: string; path: string; fileName: string; language: Language; mediaId?: string }): Promise<TranscriptResult>
+      transcribe(input: TranscriptionInput): Promise<TranscriptResult>
+      prepareTranscription(input: TranscriptionInput): Promise<PreparedTranscription>
+      transcribePrepared(id: string): Promise<TranscriptResult>
+      discardPreparedTranscription(id: string): Promise<boolean>
+      getPendingTranscriptionQueue(): Promise<PendingTranscriptionJob[]>
+      savePendingTranscriptionQueue(jobs: PendingTranscriptionJob[]): Promise<void>
       getMediaLibrary(): Promise<MediaLibrarySnapshot>
       importMedia(sources: SelectedMedia[], folderId?: string): Promise<MediaImportResult>
       importMediaFolder(folderId?: string): Promise<MediaImportResult | undefined>

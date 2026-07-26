@@ -1,12 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary } from './types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from './types'
 
 contextBridge.exposeInMainWorld('tingxie', {
   openFiles: (): Promise<SelectedMedia[]> => ipcRenderer.invoke('media:open'),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   probeMedia: (path: string) => ipcRenderer.invoke('media:probe', path),
-  transcribe: (input: { id: string; path: string; fileName: string; language: Language; mediaId?: string }) =>
+  transcribe: (input: TranscriptionInput) =>
     ipcRenderer.invoke('media:transcribe', input),
+  prepareTranscription: (input: TranscriptionInput): Promise<PreparedTranscription> => ipcRenderer.invoke('media:prepare-transcription', input),
+  transcribePrepared: (id: string): Promise<TranscriptResult> => ipcRenderer.invoke('media:transcribe-prepared', id),
+  discardPreparedTranscription: (id: string): Promise<boolean> => ipcRenderer.invoke('media:discard-prepared', id),
+  getPendingTranscriptionQueue: (): Promise<PendingTranscriptionJob[]> => ipcRenderer.invoke('transcription-queue:get'),
+  savePendingTranscriptionQueue: (jobs: PendingTranscriptionJob[]): Promise<void> => ipcRenderer.invoke('transcription-queue:save', jobs),
   getMediaLibrary: (): Promise<MediaLibrarySnapshot> => ipcRenderer.invoke('library:get'),
   importMedia: (sources: SelectedMedia[], folderId?: string): Promise<MediaImportResult> => ipcRenderer.invoke('library:import', { sources, folderId }),
   importMediaFolder: (folderId?: string): Promise<MediaImportResult | undefined> => ipcRenderer.invoke('library:import-folder', folderId),

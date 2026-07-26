@@ -62,6 +62,33 @@ export interface MediaImportProgress {
   detail: string
 }
 
+export interface TranscriptionInput {
+  id: string
+  path: string
+  fileName: string
+  language: Language
+  mediaId?: string
+}
+
+export interface PreparedTranscription {
+  id: string
+  duration: number
+  chunkCount: number
+  preparedBytes: number
+}
+
+export interface PendingTranscriptionJob {
+  id: string
+  path: string
+  mediaId?: string
+  batchId?: string
+  queuedAt?: string
+  sourceFolderId?: string
+  name: string
+  size: number
+  duration: number
+}
+
 export interface MediaInfo {
   duration: number
   codec: string
@@ -194,6 +221,8 @@ export interface AppPreferences {
   autoFollow: boolean
   seekLeadSeconds: number
   autoGenerateAnalysis: boolean
+  parallelPreparation: boolean
+  preparationConcurrency: number
 }
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
@@ -223,11 +252,13 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   autoFollow: true,
   seekLeadSeconds: 0.5,
   autoGenerateAnalysis: false,
+  parallelPreparation: true,
+  preparationConcurrency: 3,
 }
 
 export interface ProgressEvent {
   id: string
-  stage: 'preparing' | 'extracting' | 'transcribing' | 'done' | 'error' | 'cancelled'
+  stage: 'preparing' | 'extracting' | 'ready' | 'waiting-api' | 'transcribing' | 'done' | 'error' | 'cancelled'
   progress: number
   detail?: string
 }

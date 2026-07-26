@@ -1,7 +1,7 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type PreparedTranscription, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { summarizeTranscript } from '../electron/transcript-summary'
 import { QueuePanel } from './components/QueuePanel'
@@ -17,6 +17,8 @@ import { loadStartupData } from './startup-data'
 import { applyLatestProgressEvents } from './progress-batching'
 import { MotionProvider } from './motion/MotionProvider'
 import { motionVariants } from './motion/variants'
+import { TranscriptionPipeline, type TranscriptionPipelineEvent } from './transcription-pipeline'
+import { planBatchTranscription } from './batch-transcription'
 
 const AIChatPanel = lazy(() => import('./components/AIChatPanel').then((module) => ({ default: module.AIChatPanel })))
 const MediaLibraryView = lazy(() => import('./components/MediaLibraryView').then((module) => ({ default: module.MediaLibraryView })))
@@ -25,6 +27,17 @@ const TranscriptDetail = lazy(() => import('./components/TranscriptDetail').then
 
 function DeferredView({ label, className = 'deferred-view' }: { label: string; className?: string }) {
   return <div className={className} role="status"><LoaderCircle className="spin" size={20} />{label}</div>
+}
+
+async function runCancellableIpc<T>(jobId: string, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {
+  if (signal.aborted) throw new DOMException('任务已取消', 'AbortError')
+  const cancel = () => { void window.tingxie?.cancel(jobId) }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    return await operation()
+  } finally {
+    signal.removeEventListener('abort', cancel)
+  }
 }
 
 const demoParameters = new URLSearchParams(location.search)
@@ -160,12 +173,77 @@ export function App() {
   const [shellWidth, setShellWidth] = useState(() => window.innerWidth)
   const shellRef = useRef<HTMLDivElement>(null)
   const preferredChatPanelWidth = useRef(DEFAULT_CHAT_PANEL_WIDTH)
-  const queue = useRef<Promise<void>>(Promise.resolve())
+  const latestSettingsRef = useRef(settings)
+  latestSettingsRef.current = settings
+  const pipelineRef = useRef<TranscriptionPipeline<QueueFile, PreparedTranscription, TranscriptResult> | undefined>(undefined)
   const historySaveTimer = useRef<number | undefined>(undefined)
+  const queueLoadedRef = useRef(isDemo)
   const progressFrameRef = useRef<number | undefined>(undefined)
   const mediaImportClearTimer = useRef<number | undefined>(undefined)
   const pendingProgressEventsRef = useRef(new Map<string, ProgressEvent>())
   const autoAnalysisAttempted = useRef(new Set<string>())
+
+  function handleCompletedPipelineJob(job: QueueFile, result: TranscriptResult) {
+    if (!job.batchId) setSelectedResult(result)
+    const summary = summarizeTranscript(result)
+    setRecentTranscripts((current) => addRecentTranscript(current, summary))
+    setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
+    window.tingxie?.getMediaLibrary().then(setMediaLibrary).catch(() => undefined)
+  }
+
+  if (!pipelineRef.current) {
+    pipelineRef.current = new TranscriptionPipeline({
+      preparationConcurrency: 3,
+      preparationWindow: 3,
+      prepare: (job, signal) => runCancellableIpc(job.id, signal, async () => {
+        if (!window.tingxie) throw new Error('桌面服务不可用')
+        return window.tingxie.prepareTranscription({
+          id: job.id,
+          path: job.path,
+          fileName: job.name,
+          language: latestSettingsRef.current.language,
+          mediaId: job.mediaId,
+        })
+      }),
+      transcribe: (job, _prepared, signal) => runCancellableIpc(job.id, signal, async () => {
+        if (!window.tingxie) throw new Error('桌面服务不可用')
+        return window.tingxie.transcribePrepared(job.id)
+      }),
+      discardPrepared: async (job) => {
+        await window.tingxie?.discardPreparedTranscription(job.id)
+      },
+      onEvent: (event: TranscriptionPipelineEvent<QueueFile, TranscriptResult>) => {
+        const status = event.status === 'ready'
+          ? 'waiting-api'
+          : event.status === 'done' && event.result?.outcome === 'partial'
+            ? 'partial'
+            : event.status === 'done' && event.result?.outcome === 'failed'
+              ? 'error'
+              : event.status
+        const detail = event.status === 'waiting-preparation'
+          ? '等待本地预处理'
+          : event.status === 'preparing'
+            ? '正在准备音频'
+            : event.status === 'ready'
+              ? '音频片段已准备，等待 API 转写'
+              : event.status === 'transcribing'
+                ? '正在调用 API 转写'
+                : event.status === 'cancelled'
+                  ? '已取消'
+                  : event.status === 'error'
+                    ? friendlyIpcError(event.error, '转写失败')
+                    : undefined
+        setFiles((current) => current.map((item) => item.id === event.job.id ? {
+          ...item,
+          status,
+          detail: detail ?? item.detail,
+          ...(event.status === 'preparing' || event.status === 'transcribing' || event.status === 'error' || event.status === 'cancelled' ? { progress: 0 } : {}),
+          ...(event.result ? { result: event.result, progress: 100 } : {}),
+        } : item))
+        if (event.status === 'done' && event.result) handleCompletedPipelineJob(event.job, event.result)
+      },
+    })
+  }
 
   const scheduleProgressUpdate = useCallback((event: ProgressEvent) => {
     pendingProgressEventsRef.current.set(event.id, event)
@@ -204,6 +282,13 @@ export function App() {
     setSidebarWidth(settings.preferences.sidebarWidth)
     setUploadPaneHeight(settings.preferences.uploadPaneHeight)
   }, [settings.preferences.sidebarWidth, settings.preferences.uploadPaneHeight])
+
+  useEffect(() => {
+    const concurrency = settings.preferences.parallelPreparation
+      ? settings.preferences.preparationConcurrency
+      : 1
+    pipelineRef.current?.setPreparationPolicy(concurrency, concurrency)
+  }, [settings.preferences.parallelPreparation, settings.preferences.preparationConcurrency])
 
   useEffect(() => {
     if (!(isDemo && demoParameters.has('analysis-error'))) setAnalysisError('')
@@ -246,6 +331,15 @@ export function App() {
         if (data.history) setHistory(data.history)
         if (data.aiSettings) setAISettings(data.aiSettings)
         if (data.mediaLibrary) setMediaLibrary(data.mediaLibrary)
+        if (data.pendingTranscriptions?.length) {
+          setFiles(data.pendingTranscriptions.map((job): QueueFile => ({
+            ...job,
+            status: 'interrupted',
+            progress: 0,
+            detail: '应用上次退出时任务尚未完成，可点击重试',
+          })))
+        }
+        queueLoadedRef.current = true
       })
       .finally(() => setLoadingSettings(false))
     const unsubscribe = window.tingxie.onProgress(scheduleProgressUpdate)
@@ -263,29 +357,40 @@ export function App() {
     }
   }, [scheduleProgressUpdate])
 
+  const pendingQueueJobs = useMemo(() => {
+    const pendingStatuses = new Set<QueueFile['status']>(['waiting', 'waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing', 'interrupted'])
+    return files.filter((file) => pendingStatuses.has(file.status)).map((file) => ({
+      id: file.id,
+      path: file.path,
+      mediaId: file.mediaId,
+      batchId: file.batchId,
+      queuedAt: file.queuedAt,
+      sourceFolderId: file.sourceFolderId,
+      name: file.name,
+      size: file.size,
+      duration: file.duration,
+    }))
+  }, [files])
+  const pendingQueueSignature = JSON.stringify(pendingQueueJobs)
+
+  useEffect(() => {
+    if (!window.tingxie || isDemo || !queueLoadedRef.current) return
+    void window.tingxie.savePendingTranscriptionQueue(pendingQueueJobs).catch(() => undefined)
+  }, [pendingQueueSignature])
+
   function enqueue(file: QueueFile) {
-    queue.current = queue.current.then(async () => {
-      if (!window.tingxie || !file.path) return
-      setFiles((current) => current.map((item) => item.id === file.id ? { ...item, status: 'preparing', detail: '正在分析媒体信息' } : item))
-      try {
-        const result = await window.tingxie.transcribe({ id: file.id, path: file.path, fileName: file.name, language: settings.language, mediaId: file.mediaId })
-        const failedCount = result.failedSegmentCount || 0
-        const status = result.outcome === 'failed' ? 'error' : result.outcome === 'partial' ? 'partial' : 'done'
-        const detail = result.outcome === 'failed'
-          ? '所有片段均转写失败'
-          : failedCount
-            ? `转写完成，${failedCount} 个片段失败`
-            : '转写完成'
-        setFiles((current) => current.map((item) => item.id === file.id ? { ...item, status, progress: 100, detail, result } : item))
-        setSelectedResult(result)
-        const summary = summarizeTranscript(result)
-        setRecentTranscripts((current) => addRecentTranscript(current, summary))
-        setHistory((current) => [summary, ...current.filter((item) => item.id !== result.id)])
-        window.tingxie.getMediaLibrary().then(setMediaLibrary).catch(() => undefined)
-      } catch (error) {
-        setFiles((current) => current.map((item) => item.id === file.id && item.status !== 'cancelled' ? { ...item, status: 'error', progress: 0, detail: error instanceof Error ? error.message : '转写失败' } : item))
-      }
-    })
+    enqueueFiles([file])
+  }
+
+  function enqueueFiles(input: QueueFile[]) {
+    const queuedAt = new Date().toISOString()
+    const jobs = input
+      .filter((file) => Boolean(file.path))
+      .map((file) => ({ ...file, status: 'waiting-preparation' as const, progress: 0, detail: undefined, queuedAt: file.queuedAt || queuedAt }))
+    if (!jobs.length) return
+    const jobsById = new Map(jobs.map((job) => [job.id, job]))
+    setFiles((current) => current.map((file) => jobsById.get(file.id) || file))
+    pipelineRef.current?.enqueue(jobs)
   }
 
   async function addSelected(selected: SelectedMedia[]) {
@@ -297,14 +402,15 @@ export function App() {
     const assetsBySource = new Map(imported.library.assets.flatMap((asset) => asset.originalPath
       ? [[`${asset.originalPath.replace(/\\/g, '/').toLocaleLowerCase()}\0${asset.size}`, asset] as const]
       : []))
+    const batchId = selected.length > 1 ? crypto.randomUUID() : undefined
     const created = selected.map((file): QueueFile | undefined => {
       const asset = assetsBySource.get(`${file.path.replace(/\\/g, '/').toLocaleLowerCase()}\0${file.size}`)
       if (!asset) return undefined
       const id = crypto.randomUUID()
-      return { id, mediaId: asset.id, path: managedAssetPath(imported.library, asset), name: asset.displayName, size: asset.size, duration: asset.duration || 0, status: 'waiting', progress: 0 }
+      return { id, batchId, mediaId: asset.id, sourceFolderId: asset.folderId, path: managedAssetPath(imported.library, asset), name: asset.displayName, size: asset.size, duration: asset.duration || 0, status: 'waiting', progress: 0 }
     }).filter((file): file is QueueFile => Boolean(file))
     setFiles((current) => [...created, ...current])
-    if (settings.hasApiKey) created.forEach(enqueue)
+    if (settings.hasApiKey) enqueueFiles(created)
   }
 
   function managedAssetPath(library: MediaLibrarySnapshot, asset: MediaAsset): string {
@@ -312,12 +418,42 @@ export function App() {
   }
 
   function transcribeLibraryAsset(asset: MediaAsset) {
-    const file: QueueFile = { id: crypto.randomUUID(), mediaId: asset.id, path: managedAssetPath(mediaLibrary, asset), name: asset.displayName, size: asset.size, duration: asset.duration || 0, status: 'waiting', progress: 0 }
+    const file: QueueFile = { id: crypto.randomUUID(), mediaId: asset.id, sourceFolderId: asset.folderId, path: managedAssetPath(mediaLibrary, asset), name: asset.displayName, size: asset.size, duration: asset.duration || 0, status: 'waiting', progress: 0 }
     setFiles((current) => [file, ...current])
     setCurrentPage('new')
     setSelectedResult(undefined)
     if (!settings.hasApiKey) setShowSettings(true)
     else enqueue(file)
+  }
+
+  function transcribeLibraryAssets(assets: MediaAsset[], includeFailed: boolean) {
+    if (!settings.hasApiKey) {
+      setSettingsSection('asr')
+      setShowSettings(true)
+      return
+    }
+    const plan = planBatchTranscription(assets, queuedMediaIds, includeFailed)
+    if (!plan.eligible.length) return
+    const batchId = crypto.randomUUID()
+    const queuedAt = new Date().toISOString()
+    const jobs: QueueFile[] = plan.eligible.map((asset) => ({
+      id: crypto.randomUUID(),
+      batchId,
+      queuedAt,
+      mediaId: asset.id,
+      sourceFolderId: asset.folderId,
+      path: managedAssetPath(mediaLibrary, asset),
+      name: asset.displayName,
+      size: asset.size,
+      duration: asset.duration || 0,
+      status: 'waiting-preparation',
+      progress: 0,
+    }))
+    setFiles((current) => [...jobs, ...current])
+    setCurrentPage('new')
+    setSelectedResult(undefined)
+    setChatOpen(false)
+    enqueueFiles(jobs)
   }
 
   async function importLibraryFiles(folderId?: string) {
@@ -456,7 +592,9 @@ export function App() {
   }
 
   const doneCount = files.filter((file) => file.status === 'done').length
-  const isWorking = files.some((file) => ['preparing', 'extracting', 'transcribing'].includes(file.status))
+  const queuedMediaIds = useMemo(() => new Set(files.flatMap((file) =>
+    file.mediaId && !['done', 'partial', 'error', 'cancelled'].includes(file.status) ? [file.mediaId] : [])), [files])
+  const isWorking = files.some((file) => ['waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing'].includes(file.status))
   const { fadeUp } = motionVariants(settings.preferences.reducedMotion)
 
   return (
@@ -479,6 +617,8 @@ export function App() {
         onLibraryChange={setMediaLibrary}
         onOpenTranscript={(item) => void openTranscript(item)}
         onTranscribe={transcribeLibraryAsset}
+        onBatchTranscribe={transcribeLibraryAssets}
+        queuedMediaIds={queuedMediaIds}
         onImportFiles={(folderId) => void importLibraryFiles(folderId)}
         onImportFolder={(folderId) => void importLibraryFolder(folderId)}
         onRecoverHistoryMedia={async (item) => {
@@ -500,9 +640,12 @@ export function App() {
             files={files}
             selectedId={undefined}
             onSelect={(file) => setSelectedResult(file.result)}
-            onCancel={(file) => window.tingxie?.cancel(file.id)}
-            onRemove={(file) => setFiles((current) => current.filter((item) => item.id !== file.id))}
-            onRetry={(file) => enqueue({ ...file, status: 'waiting', progress: 0, detail: undefined })}
+            onCancel={(file) => { pipelineRef.current?.cancel(file.id) }}
+            onRemove={(file) => {
+              pipelineRef.current?.cancel(file.id)
+              setFiles((current) => current.filter((item) => item.id !== file.id))
+            }}
+            onRetry={(file) => enqueue({ ...file, status: 'waiting-preparation', progress: 0, detail: undefined, result: undefined })}
           />
         </m.main>}
         {currentPage === 'new' && selectedResult ? <Suspense key={`detail-${selectedResult.id}`} fallback={<DeferredView className="transcript-detail deferred-view" label="正在打开转写详情" />}><TranscriptDetail

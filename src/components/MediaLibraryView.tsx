@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { CheckSquare, ChevronRight, ExternalLink, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderPlus, Library, Move, Pencil, Play, Search, Square, Trash2, Upload, X } from 'lucide-react'
+import { CheckSquare, ChevronRight, ExternalLink, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderPlus, Library, ListPlus, Move, Pencil, Play, Search, Square, Trash2, Upload, X } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AppPreferences, type MediaAsset, type MediaFolder, type MediaImportProgress, type MediaLibrarySnapshot, type TranscriptSummary } from '../../electron/types'
@@ -11,6 +11,7 @@ import { clampLayoutValue, DEFAULT_LIBRARY_FOLDER_WIDTH, DEFAULT_LIBRARY_INSPECT
 import { buildMediaLibraryIndex, filterMediaLibraryRows, folderIdFromScope, visibleMediaFolderTree, type MediaLibraryRow, type MediaLibraryScope } from './media-library-model'
 import { normalizeRecordingName } from './recording-name'
 import { useMotionVariants } from '../motion/variants'
+import { planBatchTranscription } from '../batch-transcription'
 
 interface MediaLibraryViewProps {
   library: MediaLibrarySnapshot
@@ -22,6 +23,8 @@ interface MediaLibraryViewProps {
   onPreferencesChange?(preferences: AppPreferences): Promise<void>
   onOpenTranscript(result: TranscriptSummary): void
   onTranscribe(asset: MediaAsset): void
+  onBatchTranscribe(assets: MediaAsset[], includeFailed: boolean): void
+  queuedMediaIds?: ReadonlySet<string>
   onImportFiles(folderId?: string): void
   onImportFolder(folderId?: string): void
   onRecoverHistoryMedia?(result: TranscriptSummary): Promise<void>
@@ -81,7 +84,7 @@ function AutoGrowNameEditor({ value, focusRequest, onChange, onSave, onCancel }:
   return <textarea ref={ref} rows={1} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={handleKeyDown} aria-label="显示名称" />
 }
 
-export const MediaLibraryView = memo(function MediaLibraryView({ library, history, preferences = DEFAULT_APP_PREFERENCES, importProgress, onLibraryChange, onHistoryChange, onPreferencesChange, onOpenTranscript, onTranscribe, onImportFiles, onImportFolder, onRecoverHistoryMedia }: MediaLibraryViewProps) {
+export const MediaLibraryView = memo(function MediaLibraryView({ library, history, preferences = DEFAULT_APP_PREFERENCES, importProgress, onLibraryChange, onHistoryChange, onPreferencesChange, onOpenTranscript, onTranscribe, onBatchTranscribe, queuedMediaIds = new Set(), onImportFiles, onImportFolder, onRecoverHistoryMedia }: MediaLibraryViewProps) {
   const { dialogPanel, fade, fadeUp, listItem } = useMotionVariants()
   const [scope, setScope] = useState<MediaLibraryScope>({ kind: 'all' })
   const [query, setQuery] = useState('')
@@ -102,6 +105,8 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
   const [focusedRowKey, setFocusedRowKey] = useState<string>()
   const [recoveryMessage, setRecoveryMessage] = useState('')
   const [error, setError] = useState('')
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
+  const [includeFailedInBatch, setIncludeFailedInBatch] = useState(false)
   const [folderPaneWidth, setFolderPaneWidth] = useState(preferences.libraryFolderWidth)
   const [inspectorPaneWidth, setInspectorPaneWidth] = useState(preferences.libraryInspectorWidth)
   const tableScrollRef = useRef<HTMLDivElement>(null)
@@ -121,6 +126,14 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
   const allVisibleSelected = visibleSelectionKeys.length > 0 && visibleSelectionKeys.every((key) => selected.has(key))
   const selectedAssetIds = useMemo(() => selectionIds(selected, 'asset'), [selected])
   const selectedTranscriptIds = useMemo(() => selectionIds(selected, 'transcript'), [selected])
+  const selectedAssets = useMemo(() => selectedAssetIds.flatMap((id) => {
+    const asset = derived.assetById.get(id)
+    return asset ? [asset] : []
+  }), [derived.assetById, selectedAssetIds])
+  const batchPlan = useMemo(() => planBatchTranscription(selectedAssets, queuedMediaIds, includeFailedInBatch), [includeFailedInBatch, queuedMediaIds, selectedAssets])
+  const batchEligibleAssets = batchPlan.eligible
+  const batchDuration = useMemo(() => batchEligibleAssets.reduce((sum, asset) => sum + (asset.duration || 0), 0), [batchEligibleAssets])
+  const batchBytes = useMemo(() => batchEligibleAssets.reduce((sum, asset) => sum + asset.size, 0), [batchEligibleAssets])
   const deleteFolder = deleteFolderId ? library.folders.find((folder) => folder.id === deleteFolderId) : undefined
   const deleteDescendants = useMemo(() => deleteFolderId ? folderDescendants(library.folders, deleteFolderId) : new Set<string>(), [deleteFolderId, library.folders])
   const deleteAssetCount = useMemo(() => deleteFolderId ? library.assets.filter((asset) => asset.folderId === deleteFolderId || (asset.folderId && deleteDescendants.has(asset.folderId))).length : 0, [deleteFolderId, deleteDescendants, library.assets])
@@ -353,7 +366,7 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
         <div className="library-toolbar"><label className="library-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称或格式" />{query && <button onClick={() => setQuery('')} aria-label="清除搜索"><X size={14} /></button>}</label><GlassSelect size="compact" ariaLabel="转写状态筛选" value={status} options={[{ value: 'all', label: '全部状态' }, { value: 'untranscribed', label: '未转写' }, { value: 'transcribed', label: '已转写' }, { value: 'partial', label: '部分完成' }, { value: 'failed', label: '失败' }]} onValueChange={(value) => setStatus(value as typeof status)} /></div>
         <AnimatePresence initial={false}>{importProgress && <m.div variants={listItem} initial="initial" animate="animate" exit="exit" className="library-import-progress" role="status" aria-live="polite"><span>{importProgress.detail}</span><progress max={Math.max(1, importProgress.total)} value={importProgress.total ? importProgress.completed : undefined} /></m.div>}</AnimatePresence>
         <AnimatePresence initial={false}>{(recoveryMessage || error) && <m.div variants={listItem} initial="initial" animate="animate" exit="exit" className={error ? 'library-recovery-message error' : 'library-recovery-message'} role="status">{error || recoveryMessage}</m.div>}</AnimatePresence>
-        <AnimatePresence initial={false}>{selected.size > 0 && <m.div layout variants={listItem} initial="initial" animate="animate" exit="exit" className="batch-bar"><span><CheckSquare size={16} />已选择 {selectedAssetIds.length ? `${selectedAssetIds.length} 个媒体` : ''}{selectedAssetIds.length && selectedTranscriptIds.length ? '、' : ''}{selectedTranscriptIds.length ? `${selectedTranscriptIds.length} 个转写` : ''}</span><GlassSelect className="folder-path-select" contentClassName="folder-path-select-content" size="compact" ariaLabel="移动所选项目" placeholder="移动到…" value="" options={folderOptions} onValueChange={(value) => void moveItems(value === '__root' ? undefined : value)} /><button className="danger-button" onClick={() => void deleteItems(new Set(selected))}><Trash2 size={15} />删除所选</button><button onClick={() => setSelected(new Set())}>取消</button></m.div>}</AnimatePresence>
+        <AnimatePresence initial={false}>{selected.size > 0 && <m.div layout variants={listItem} initial="initial" animate="animate" exit="exit" className="batch-bar"><span><CheckSquare size={16} />已选择 {selectedAssetIds.length ? `${selectedAssetIds.length} 个媒体` : ''}{selectedAssetIds.length && selectedTranscriptIds.length ? '、' : ''}{selectedTranscriptIds.length ? `${selectedTranscriptIds.length} 个转写` : ''}</span>{selectedAssetIds.length > 0 && <button className="batch-transcribe-button" onClick={() => { setIncludeFailedInBatch(false); setBatchDialogOpen(true) }}><ListPlus size={15} />批量转写</button>}<GlassSelect className="folder-path-select" contentClassName="folder-path-select-content" size="compact" ariaLabel="移动所选项目" placeholder="移动到…" value="" options={folderOptions} onValueChange={(value) => void moveItems(value === '__root' ? undefined : value)} /><button className="danger-button" onClick={() => void deleteItems(new Set(selected))}><Trash2 size={15} />删除所选</button><button onClick={() => setSelected(new Set())}>取消</button></m.div>}</AnimatePresence>
         <div className="library-table" role="table" aria-label="媒体文件">
           <div className="library-table-head" role="row"><button onClick={() => setSelected((current) => { const next = new Set(current); for (const key of visibleSelectionKeys) { if (allVisibleSelected) next.delete(key); else next.add(key) } return next })} aria-label="全选可见项目">{allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}</button><span>名称</span><span>时长</span><span>大小</span><span>状态</span><span>导入时间</span></div>
           <div ref={tableScrollRef} className="library-table-scroll" data-virtualized="true">{rows.length ? <div className="library-virtual-rows" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>{rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -386,6 +399,24 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
         {focused ? focusedTranscript ? <button className="primary-button" onClick={() => onOpenTranscript(focusedTranscript)}>打开转写</button> : <button className="primary-button" onClick={() => onTranscribe(focused)}>开始转写</button> : focusedHistory ? <><button className="primary-button" onClick={() => onOpenTranscript(focusedHistory)}>打开转写</button>{focusedHistory.sourceAvailable && !derived.linkedTranscriptIds.has(focusedHistory.id) && onRecoverHistoryMedia ? <button className="soft-button" onClick={() => void recoverHistoryMedia(focusedHistory)}>迁入原音频</button> : null}</> : null}
       </> : <div className="inspector-empty"><FileAudio size={30} /><strong>选择一个文件</strong><span>点击左侧方框查看详情；点击其余区域打开转写</span></div>}</m.div></AnimatePresence></aside>
     </section>
+    <AnimatePresence initial={false}>{batchDialogOpen && <m.div variants={fade} initial="initial" animate="animate" exit="exit" className="modal-backdrop batch-transcription-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setBatchDialogOpen(false) }}><m.section variants={dialogPanel} initial="initial" animate="animate" exit="exit" className="batch-transcription-dialog glass-card" role="dialog" aria-modal="true" aria-labelledby="batch-transcription-title">
+      <div className="batch-dialog-icon"><ListPlus size={22} /></div>
+      <h2 id="batch-transcription-title">批量新增转写任务</h2>
+      <p>将加入 <strong>{batchEligibleAssets.length}</strong> 个媒体，共 {formatDuration(batchDuration)}、{formatBytes(batchBytes)}。</p>
+      <div className="batch-pipeline-preview">
+        <span><b>本地准备</b><small>{preferences.parallelPreparation ? `最多 ${preferences.preparationConcurrency} 个音频并行切片` : '严格逐个准备'}</small></span>
+        <ChevronRight size={16} />
+        <span><b>API 转写</b><small>媒体之间严格按队列顺序；单个媒体内部仍使用现有自适应并发</small></span>
+      </div>
+      {(batchPlan.skipped.alreadyQueued > 0 || batchPlan.skipped.alreadyTranscribed > 0 || batchPlan.skipped.partial > 0 || batchPlan.skipped.failed > 0) && <div className="batch-skip-summary">
+        {batchPlan.skipped.alreadyQueued > 0 && <span>跳过队列中任务 {batchPlan.skipped.alreadyQueued} 个</span>}
+        {batchPlan.skipped.alreadyTranscribed > 0 && <span>跳过已转写 {batchPlan.skipped.alreadyTranscribed} 个</span>}
+        {batchPlan.skipped.partial > 0 && <span>跳过部分完成 {batchPlan.skipped.partial} 个</span>}
+        {batchPlan.skipped.failed > 0 && <span>跳过失败媒体 {batchPlan.skipped.failed} 个</span>}
+      </div>}
+      {selectedAssets.some((asset) => asset.transcriptStatus === 'failed') && <label className="concurrency-setting batch-retry-setting"><span><strong>同时重试失败媒体</strong><small>已转写和部分完成的媒体仍不会重复加入</small></span><input type="checkbox" checked={includeFailedInBatch} onChange={(event) => setIncludeFailedInBatch(event.target.checked)} /><span className="toggle" aria-hidden="true"><i /></span></label>}
+      <footer><button className="secondary-button" onClick={() => setBatchDialogOpen(false)}>取消</button><button className="primary-button compact" disabled={!batchEligibleAssets.length} onClick={() => { onBatchTranscribe(selectedAssets, includeFailedInBatch); setBatchDialogOpen(false); setSelected(new Set()) }}><ListPlus size={16} />加入 {batchEligibleAssets.length} 个任务</button></footer>
+    </m.section></m.div>}</AnimatePresence>
     <AnimatePresence initial={false}>{deleteFolder && <m.div variants={fade} initial="initial" animate="animate" exit="exit" className="modal-backdrop folder-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteFolderId(undefined) }}><m.section variants={dialogPanel} initial="initial" animate="animate" exit="exit" className="folder-delete-dialog glass-card" role="dialog" aria-modal="true" aria-labelledby="delete-folder-title"><div className="delete-folder-icon"><Trash2 size={21} /></div><h2 id="delete-folder-title">删除“{deleteFolder.name}”</h2><p>包含 {deleteDescendants.size} 个子文件夹、{deleteAssetCount} 个媒体文件、{deleteTranscriptCount} 条纯文字转写。文字转写会安全移到上一级；请选择媒体文件的处理方式。</p><button className="secondary-button" onClick={() => void deleteFolderWithMode(deleteFolder, 'preserve-content')}>仅删除文件夹，内容移到上一级</button><button className="danger-button" onClick={() => void deleteFolderWithMode(deleteFolder, 'delete-media')}>删除文件夹及其媒体文件</button><button className="text-button" onClick={() => setDeleteFolderId(undefined)}>取消</button></m.section></m.div>}</AnimatePresence>
   </m.main>
 })

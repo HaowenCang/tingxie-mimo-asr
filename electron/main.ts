@@ -69,6 +69,8 @@ import {
 } from './media-library'
 import { MediaLibraryStore } from './media-library-store'
 import { planMediaImportConcurrency, shouldEmitImportProgress } from './media-import-performance'
+import { readPendingTranscriptionQueue, writePendingTranscriptionQueue } from './transcription-queue-store'
+import { cleanupStaleTranscriptionTempDirs } from './transcription-temp'
 import {
   serviceEndpoint,
   DEFAULT_APP_PREFERENCES,
@@ -86,18 +88,23 @@ import {
   type MediaImportResult,
   type MediaLibrarySnapshot,
   type ParagraphLength,
+  type PendingTranscriptionJob,
+  type PreparedTranscription,
   type ProgressEvent,
   type SelectedMedia,
   type ServiceMode,
   type TranscriptResult,
   type TranscriptSummary,
   type TranscriptAnalysis,
+  type TranscriptionInput,
 } from './types'
 
 const SUPPORTED_INPUTS = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma', 'mp4', 'mov', 'mkv', 'avi', 'webm', 'wmv', 'mpeg', 'mpg']
 const activeJobs = new Map<string, { controller: AbortController; process?: ChildProcessWithoutNullStreams }>()
+const preparedTranscriptions = new Map<string, PreparedTranscriptionJob>()
 const activeAIRequests = new Map<string, AbortController>()
 const analysisJsonModeUnsupportedProviders = new Set<string>()
+let pendingTranscriptionQueueWrite: Promise<void> = Promise.resolve()
 
 interface StoredAIProvider {
   id: string
@@ -142,6 +149,15 @@ interface PreparedAudioChunk {
   overlapWithPrevious: number
 }
 
+interface PreparedTranscriptionJob {
+  input: TranscriptionInput
+  media: MediaInfo
+  chunks: PreparedAudioChunk[]
+  silences: SilenceInterval[]
+  tempDir?: string
+  preparedBytes: number
+}
+
 interface ProbeJson {
   format?: { duration?: string; bit_rate?: string }
   streams?: Array<{
@@ -176,6 +192,10 @@ function splitHistoryBackupPath(): string {
 
 function transcriptStoreRoot(): string {
   return path.join(app.getPath('userData'), 'history')
+}
+
+function transcriptionQueuePath(): string {
+  return path.join(app.getPath('userData'), 'pending-transcriptions.json')
 }
 
 function chatsPath(): string {
@@ -1078,6 +1098,263 @@ async function repairStoredTranscript(recordId: string): Promise<StoredTranscrip
   }
 }
 
+async function preparedChunkBytes(chunks: PreparedAudioChunk[], tempDir?: string): Promise<number> {
+  if (!tempDir) return 0
+  let total = 0
+  for (const chunk of chunks) {
+    if (!path.resolve(chunk.file).startsWith(path.resolve(tempDir))) continue
+    total += await fs.stat(chunk.file).then((stat) => stat.size).catch(() => 0)
+  }
+  return total
+}
+
+async function cleanupPreparedTranscription(record: PreparedTranscriptionJob | undefined): Promise<void> {
+  if (record?.tempDir) await fs.rm(record.tempDir, { recursive: true, force: true }).catch(() => undefined)
+}
+
+async function prepareTranscriptionInput(
+  input: TranscriptionInput,
+  window: BrowserWindow,
+): Promise<PreparedTranscription> {
+  if (activeJobs.has(input.id)) throw new Error('该任务正在处理中')
+  const previous = preparedTranscriptions.get(input.id)
+  if (previous) {
+    preparedTranscriptions.delete(input.id)
+    await cleanupPreparedTranscription(previous)
+  }
+  const controller = new AbortController()
+  const job = { controller } as { controller: AbortController; process?: ChildProcessWithoutNullStreams }
+  activeJobs.set(input.id, job)
+  let tempDir: string | undefined
+  try {
+    emitProgress(window, { id: input.id, stage: 'preparing', progress: 0, detail: '正在分析媒体信息' })
+    const media = publicMediaInfo(await probe(input.path))
+    const prepared = await prepareChunks(input.path, input.id, window, job, media.duration)
+    tempDir = prepared.tempDir
+    const record: PreparedTranscriptionJob = {
+      input,
+      media,
+      chunks: prepared.chunks,
+      silences: prepared.silences,
+      tempDir,
+      preparedBytes: await preparedChunkBytes(prepared.chunks, tempDir),
+    }
+    preparedTranscriptions.set(input.id, record)
+    emitProgress(window, {
+      id: input.id,
+      stage: 'ready',
+      progress: 100,
+      detail: `已准备 ${record.chunks.length} 个片段，等待 API 转写`,
+    })
+    return {
+      id: input.id,
+      duration: media.duration,
+      chunkCount: record.chunks.length,
+      preparedBytes: record.preparedBytes,
+    }
+  } catch (error) {
+    const cancelled = controller.signal.aborted
+    emitProgress(window, {
+      id: input.id,
+      stage: cancelled ? 'cancelled' : 'error',
+      progress: 0,
+      detail: error instanceof Error ? error.message : '音频准备失败',
+    })
+    if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+    throw error
+  } finally {
+    activeJobs.delete(input.id)
+  }
+}
+
+async function transcribePreparedInput(id: string, window: BrowserWindow): Promise<TranscriptResult> {
+  const record = preparedTranscriptions.get(id)
+  if (!record) throw new Error('已准备的音频切片不存在，请重新加入转写队列')
+  const preparedRecord = record
+  if (activeJobs.has(id)) throw new Error('该任务正在处理中')
+  const { input, media } = record
+  const controller = new AbortController()
+  const job = { controller } as { controller: AbortController; process?: ChildProcessWithoutNullStreams }
+  activeJobs.set(input.id, job)
+  try {
+    const apiConfig = await getApiConfig()
+    const concurrency = new AdaptiveConcurrencyController(apiConfig.adaptiveConcurrency)
+    const rateLimiter = new RequestRateLimiter()
+    let recoveryFileCounter = 0
+
+    async function splitForQualityRecovery(
+      chunk: RecoverableAudioChunk,
+      plan: TranscriptQualityRecoveryPlan,
+      depth: number,
+    ): Promise<[RecoverableAudioChunk, RecoverableAudioChunk]> {
+      if (!preparedRecord.tempDir) preparedRecord.tempDir = path.join(os.tmpdir(), `tingxie-${input.id}-${Date.now()}-quality-recovery`)
+      await fs.mkdir(preparedRecord.tempDir, { recursive: true })
+      const extension = path.extname(chunk.file) || '.mp3'
+      const physicalLead = chunk.overlapWithPrevious / 2
+      const localSplit = physicalLead + plan.splitAt - chunk.start
+      const leftDuration = physicalLead + plan.splitAt - chunk.start + plan.overlapPadding
+      const rightOffset = Math.max(0, localSplit - plan.overlapPadding)
+      const rightDuration = chunk.end - plan.splitAt + plan.overlapPadding
+      const prefix = `quality-${String(recoveryFileCounter++).padStart(4, '0')}-d${depth}`
+      const leftFile = path.join(preparedRecord.tempDir, `${prefix}-left${extension}`)
+      const rightFile = path.join(preparedRecord.tempDir, `${prefix}-right${extension}`)
+      await runProcess(unpacked(String(ffmpegStatic)), [
+        '-y', '-ss', '0', '-i', chunk.file, '-t', leftDuration.toFixed(3),
+        '-map', '0:a:0', '-vn', '-c:a', 'copy', leftFile,
+      ], job)
+      await runProcess(unpacked(String(ffmpegStatic)), [
+        '-y', '-ss', rightOffset.toFixed(3), '-i', chunk.file, '-t', rightDuration.toFixed(3),
+        '-map', '0:a:0', '-vn', '-c:a', 'copy', rightFile,
+      ], job)
+      return [
+        { file: leftFile, start: chunk.start, end: plan.splitAt, overlapWithPrevious: chunk.overlapWithPrevious },
+        { file: rightFile, start: plan.splitAt, end: chunk.end, overlapWithPrevious: plan.overlapPadding * 2 },
+      ]
+    }
+
+    emitProgress(window, {
+      id: input.id,
+      stage: 'transcribing',
+      progress: 0,
+      detail: apiConfig.adaptiveConcurrency ? '正在自适应并发识别' : '正在顺序识别',
+    })
+    let failedChunks = 0
+    const chunkGroups = await runAdaptivePool(record.chunks, async (chunk, chunkIndex) => {
+      if (controller.signal.aborted) throw new Error('任务已取消')
+      const recovered = await recoverTranscriptChunk({
+        chunk,
+        silences: record.silences,
+        transcribe: (candidate) => requestTranscript(
+          candidate.file,
+          input.language,
+          controller.signal,
+          apiConfig,
+          concurrency,
+          rateLimiter,
+          { jobId: input.id, chunkIndex, start: candidate.start, end: candidate.end },
+        ),
+        split: splitForQualityRecovery,
+        onSplit: (candidate, plan, depth) => {
+          logDiagnostic('chunk-quality-recovery-split', {
+            jobId: input.id,
+            chunkIndex,
+            start: candidate.start,
+            end: candidate.end,
+            splitAt: plan.splitAt,
+            overlapPadding: plan.overlapPadding,
+            depth,
+          })
+          emitProgress(window, {
+            id: input.id,
+            stage: 'transcribing',
+            progress: 0,
+            detail: `第 ${chunkIndex + 1} 段出现异常循环，正在自动拆分恢复`,
+          })
+        },
+      })
+      failedChunks += recovered.filter((candidate) => candidate.status === 'failed').length
+      return recovered
+    }, concurrency, (completed, total, currentConcurrency) => {
+      emitProgress(window, {
+        id: input.id,
+        stage: 'transcribing',
+        progress: Math.round(completed / total * 100),
+        detail: apiConfig.adaptiveConcurrency
+          ? `已完成 ${completed}/${total} 段 · 失败 ${failedChunks} · 并发 ${currentConcurrency} · ${rateLimiter.currentRpm} RPM`
+          : `已完成 ${completed}/${total} 段 · 失败 ${failedChunks}`,
+      })
+    })
+    const chunkTranscripts = chunkGroups.flat()
+    for (const [chunkIndex, chunk] of chunkTranscripts.entries()) {
+      if (chunk.status === 'failed') continue
+      const collapse = collapseRepeatedTranscriptBlocks(chunk.text)
+      if (!collapse.repeatGroups) continue
+      logDiagnostic('chunk-transcript-repetition-collapsed', {
+        jobId: input.id,
+        chunkIndex,
+        repeatGroups: collapse.repeatGroups,
+        removedCharacters: collapse.removedCharacters,
+      })
+    }
+    const segments: TranscriptResult['segments'] = estimateTranscriptSegments(chunkTranscripts, media.duration, apiConfig.paragraphLength)
+    const failedSegmentCount = segments.filter((segment) => segment.status === 'failed').length
+    const successfulChunkCount = chunkTranscripts.length - failedChunks
+    const resultOutcome: NonNullable<TranscriptResult['outcome']> = failedSegmentCount === 0
+      ? 'complete'
+      : successfulChunkCount > 0
+        ? 'partial'
+        : 'failed'
+    const result: TranscriptResult = {
+      id: input.id,
+      revision: 0,
+      fileName: input.fileName,
+      createdAt: new Date().toISOString(),
+      text: segments.map(plainTranscriptSegment).join('\n\n'),
+      segments,
+      duration: media.duration,
+      outcome: resultOutcome,
+      failedSegmentCount,
+      sourcePath: input.path,
+      mediaId: input.mediaId,
+      silences: record.silences,
+      chunks: chunkTranscripts.map((chunk, index) => ({
+        index,
+        start: chunk.start,
+        end: chunk.end ?? media.duration,
+        overlapWithPrevious: chunk.overlapWithPrevious,
+        text: chunk.text,
+        status: chunk.status === 'failed' ? 'failed' : 'success',
+        ...(chunk.status === 'failed' ? { error: chunk.error, attempts: chunk.attempts, rateLimitWaits: chunk.rateLimitWaits } : {}),
+      })),
+    }
+    await saveHistory(result)
+    if (input.mediaId) {
+      const storedSettings = await readCachedSettings()
+      const linked = linkTranscriptToAsset(
+        await readMediaLibrary(storedSettings),
+        input.mediaId,
+        result.id,
+        resultOutcome === 'complete' ? 'transcribed' : resultOutcome,
+        new Date().toISOString(),
+      )
+      await writeMediaLibrary(storedSettings, linked)
+    }
+    logDiagnostic('transcription-completed', {
+      jobId: input.id,
+      inputChunks: record.chunks.length,
+      chunks: chunkTranscripts.length,
+      successfulChunks: successfulChunkCount,
+      failedChunks,
+      outcome: resultOutcome,
+    })
+    const detail = resultOutcome === 'complete'
+      ? '转写完成'
+      : resultOutcome === 'partial'
+        ? `转写完成，${failedSegmentCount} 个片段失败`
+        : '所有片段均转写失败'
+    emitProgress(window, { id: input.id, stage: 'done', progress: 100, detail })
+    return result
+  } catch (error) {
+    const cancelled = controller.signal.aborted
+    emitProgress(window, {
+      id: input.id,
+      stage: cancelled ? 'cancelled' : 'error',
+      progress: 0,
+      detail: error instanceof Error ? error.message : '未知错误',
+    })
+    logDiagnostic('transcription-failed', {
+      jobId: input.id,
+      cancelled,
+      error: normalizeErrorFingerprint(undefined, error instanceof Error ? error.message : '未知错误'),
+    })
+    throw error
+  } finally {
+    activeJobs.delete(input.id)
+    preparedTranscriptions.delete(input.id)
+    await cleanupPreparedTranscription(record)
+  }
+}
+
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
@@ -1101,6 +1378,8 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  const removedStaleTranscriptionDirs = await cleanupStaleTranscriptionTempDirs(os.tmpdir()).catch(() => 0)
+  if (removedStaleTranscriptionDirs) logDiagnostic('stale-transcription-temp-cleaned', { removed: removedStaleTranscriptionDirs })
   const repairRecordId = process.env.TINGXIE_REPAIR_TRANSCRIPT_ID?.trim()
   if (repairRecordId) {
     try {
@@ -1345,196 +1624,40 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('media:probe', async (_event, pathname: string) => publicMediaInfo(await probe(pathname)))
 
-  ipcMain.handle('media:transcribe', async (_event, input: { id: string; path: string; fileName: string; language: Language; mediaId?: string }) => {
-    const controller = new AbortController()
-    const job = { controller } as { controller: AbortController; process?: ChildProcessWithoutNullStreams }
-    activeJobs.set(input.id, job)
-    let tempDir: string | undefined
-    try {
-      emitProgress(window, { id: input.id, stage: 'preparing', progress: 0, detail: '正在分析媒体信息' })
-      const apiConfig = await getApiConfig()
-      const media = publicMediaInfo(await probe(input.path))
-      const prepared = await prepareChunks(input.path, input.id, window, job, media.duration)
-      tempDir = prepared.tempDir
-      const concurrency = new AdaptiveConcurrencyController(apiConfig.adaptiveConcurrency)
-      const rateLimiter = new RequestRateLimiter()
-      let recoveryFileCounter = 0
+  ipcMain.handle('media:prepare-transcription', (_event, input: TranscriptionInput) => prepareTranscriptionInput(input, window))
 
-      async function splitForQualityRecovery(
-        chunk: RecoverableAudioChunk,
-        plan: TranscriptQualityRecoveryPlan,
-        depth: number,
-      ): Promise<[RecoverableAudioChunk, RecoverableAudioChunk]> {
-        if (!tempDir) tempDir = path.join(os.tmpdir(), `tingxie-${input.id}-${Date.now()}-quality-recovery`)
-        await fs.mkdir(tempDir, { recursive: true })
-        const extension = path.extname(chunk.file) || '.mp3'
-        const physicalLead = chunk.overlapWithPrevious / 2
-        const localSplit = physicalLead + plan.splitAt - chunk.start
-        const leftDuration = physicalLead + plan.splitAt - chunk.start + plan.overlapPadding
-        const rightOffset = Math.max(0, localSplit - plan.overlapPadding)
-        const rightDuration = chunk.end - plan.splitAt + plan.overlapPadding
-        const prefix = `quality-${String(recoveryFileCounter++).padStart(4, '0')}-d${depth}`
-        const leftFile = path.join(tempDir, `${prefix}-left${extension}`)
-        const rightFile = path.join(tempDir, `${prefix}-right${extension}`)
-        await runProcess(unpacked(String(ffmpegStatic)), [
-          '-y', '-ss', '0', '-i', chunk.file, '-t', leftDuration.toFixed(3),
-          '-map', '0:a:0', '-vn', '-c:a', 'copy', leftFile,
-        ], job)
-        await runProcess(unpacked(String(ffmpegStatic)), [
-          '-y', '-ss', rightOffset.toFixed(3), '-i', chunk.file, '-t', rightDuration.toFixed(3),
-          '-map', '0:a:0', '-vn', '-c:a', 'copy', rightFile,
-        ], job)
-        return [
-          { file: leftFile, start: chunk.start, end: plan.splitAt, overlapWithPrevious: chunk.overlapWithPrevious },
-          { file: rightFile, start: plan.splitAt, end: chunk.end, overlapWithPrevious: plan.overlapPadding * 2 },
-        ]
-      }
+  ipcMain.handle('media:transcribe-prepared', (_event, id: string) => transcribePreparedInput(id, window))
 
-      emitProgress(window, {
-        id: input.id,
-        stage: 'transcribing',
-        progress: 0,
-        detail: apiConfig.adaptiveConcurrency ? '正在自适应并发识别' : '正在顺序识别',
-      })
-      let failedChunks = 0
-      const chunkGroups = await runAdaptivePool(prepared.chunks, async (chunk, chunkIndex) => {
-        if (controller.signal.aborted) throw new Error('任务已取消')
-        const recovered = await recoverTranscriptChunk({
-          chunk,
-          silences: prepared.silences,
-          transcribe: (candidate) => requestTranscript(
-            candidate.file,
-            input.language,
-            controller.signal,
-            apiConfig,
-            concurrency,
-            rateLimiter,
-            { jobId: input.id, chunkIndex, start: candidate.start, end: candidate.end },
-          ),
-          split: splitForQualityRecovery,
-          onSplit: (candidate, plan, depth) => {
-            logDiagnostic('chunk-quality-recovery-split', {
-              jobId: input.id,
-              chunkIndex,
-              start: candidate.start,
-              end: candidate.end,
-              splitAt: plan.splitAt,
-              overlapPadding: plan.overlapPadding,
-              depth,
-            })
-            emitProgress(window, {
-              id: input.id,
-              stage: 'transcribing',
-              progress: 0,
-              detail: `第 ${chunkIndex + 1} 段出现异常循环，正在自动拆分恢复`,
-            })
-          },
-        })
-        failedChunks += recovered.filter((candidate) => candidate.status === 'failed').length
-        return recovered
-      }, concurrency, (completed, total, currentConcurrency) => {
-        emitProgress(window, {
-          id: input.id,
-          stage: 'transcribing',
-          progress: Math.round(completed / total * 100),
-          detail: apiConfig.adaptiveConcurrency
-            ? `已完成 ${completed}/${total} 段 · 失败 ${failedChunks} · 并发 ${currentConcurrency} · ${rateLimiter.currentRpm} RPM`
-            : `已完成 ${completed}/${total} 段 · 失败 ${failedChunks}`,
-        })
-      })
-      const chunkTranscripts = chunkGroups.flat()
-      for (const [chunkIndex, chunk] of chunkTranscripts.entries()) {
-        if (chunk.status === 'failed') continue
-        const collapse = collapseRepeatedTranscriptBlocks(chunk.text)
-        if (!collapse.repeatGroups) continue
-        logDiagnostic('chunk-transcript-repetition-collapsed', {
-          jobId: input.id,
-          chunkIndex,
-          repeatGroups: collapse.repeatGroups,
-          removedCharacters: collapse.removedCharacters,
-        })
-      }
-      const segments: TranscriptResult['segments'] = estimateTranscriptSegments(chunkTranscripts, media.duration, apiConfig.paragraphLength)
-      const failedSegmentCount = segments.filter((segment) => segment.status === 'failed').length
-      const successfulChunkCount = chunkTranscripts.length - failedChunks
-      const resultOutcome: NonNullable<TranscriptResult['outcome']> = failedSegmentCount === 0
-        ? 'complete'
-        : successfulChunkCount > 0
-          ? 'partial'
-          : 'failed'
-      const result: TranscriptResult = {
-        id: input.id,
-        revision: 0,
-        fileName: input.fileName,
-        createdAt: new Date().toISOString(),
-        text: segments.map(plainTranscriptSegment).join('\n\n'),
-        segments,
-        duration: media.duration,
-        outcome: resultOutcome,
-        failedSegmentCount,
-        sourcePath: input.path,
-        mediaId: input.mediaId,
-        silences: prepared.silences,
-        chunks: chunkTranscripts.map((chunk, index) => ({
-          index,
-          start: chunk.start,
-          end: chunk.end ?? media.duration,
-          overlapWithPrevious: chunk.overlapWithPrevious,
-          text: chunk.text,
-          status: chunk.status === 'failed' ? 'failed' : 'success',
-          ...(chunk.status === 'failed' ? { error: chunk.error, attempts: chunk.attempts, rateLimitWaits: chunk.rateLimitWaits } : {}),
-        })),
-      }
-      await saveHistory(result)
-      if (input.mediaId) {
-        const storedSettings = await readCachedSettings()
-        const linked = linkTranscriptToAsset(
-          await readMediaLibrary(storedSettings),
-          input.mediaId,
-          result.id,
-          resultOutcome === 'complete' ? 'transcribed' : resultOutcome,
-          new Date().toISOString(),
-        )
-        await writeMediaLibrary(storedSettings, linked)
-      }
-      logDiagnostic('transcription-completed', {
-        jobId: input.id,
-        inputChunks: prepared.chunks.length,
-        chunks: chunkTranscripts.length,
-        successfulChunks: successfulChunkCount,
-        failedChunks,
-        outcome: resultOutcome,
-      })
-      const detail = resultOutcome === 'complete'
-        ? '转写完成'
-        : resultOutcome === 'partial'
-          ? `转写完成，${failedSegmentCount} 个片段失败`
-          : '所有片段均转写失败'
-      emitProgress(window, { id: input.id, stage: 'done', progress: 100, detail })
-      return result
-    } catch (error) {
-      const cancelled = controller.signal.aborted
-      emitProgress(window, {
-        id: input.id,
-        stage: cancelled ? 'cancelled' : 'error',
-        progress: 0,
-        detail: error instanceof Error ? error.message : '未知错误',
-      })
-      logDiagnostic('transcription-failed', {
-        jobId: input.id,
-        cancelled,
-        error: normalizeErrorFingerprint(undefined, error instanceof Error ? error.message : '未知错误'),
-      })
-      throw error
-    } finally {
-      activeJobs.delete(input.id)
-      if (tempDir) await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
-    }
+  ipcMain.handle('media:discard-prepared', async (_event, id: string) => {
+    const record = preparedTranscriptions.get(id)
+    preparedTranscriptions.delete(id)
+    await cleanupPreparedTranscription(record)
+    return Boolean(record)
+  })
+
+  ipcMain.handle('media:transcribe', async (_event, input: TranscriptionInput) => {
+    await prepareTranscriptionInput(input, window)
+    return transcribePreparedInput(input.id, window)
   })
 
   ipcMain.handle('media:cancel', (_event, id: string) => {
     activeJobs.get(id)?.controller.abort()
+    const prepared = preparedTranscriptions.get(id)
+    if (prepared) {
+      preparedTranscriptions.delete(id)
+      void cleanupPreparedTranscription(prepared)
+    }
     return true
+  })
+
+  ipcMain.handle('transcription-queue:get', (): Promise<PendingTranscriptionJob[]> =>
+    readPendingTranscriptionQueue(transcriptionQueuePath()))
+
+  ipcMain.handle('transcription-queue:save', (_event, jobs: PendingTranscriptionJob[]): Promise<void> => {
+    pendingTranscriptionQueueWrite = pendingTranscriptionQueueWrite
+      .catch(() => undefined)
+      .then(() => writePendingTranscriptionQueue(transcriptionQueuePath(), jobs))
+    return pendingTranscriptionQueueWrite
   })
 
   ipcMain.handle('settings:get', async () => {
@@ -1601,6 +1724,8 @@ app.whenReady().then(async () => {
     preferences.minimumSilenceSeconds = Math.min(5, Math.max(0.3, Number(preferences.minimumSilenceSeconds) || 0.8))
     preferences.seekSeconds = [5, 10, 15].includes(Number(preferences.seekSeconds)) ? Number(preferences.seekSeconds) : 5
     preferences.seekLeadSeconds = Math.min(2, Math.max(0, Number(preferences.seekLeadSeconds) || 0))
+    preferences.preparationConcurrency = Math.min(4, Math.max(1, Math.round(Number(preferences.preparationConcurrency) || 3)))
+    preferences.parallelPreparation = preferences.parallelPreparation !== false
     current.preferences = preferences
     await writeJson(settingsPath(), current); invalidateSettings()
     return preferences
@@ -1931,10 +2056,17 @@ app.whenReady().then(async () => {
 
 let quittingAfterDiagnosticFlush = false
 app.on('before-quit', (event) => {
-  if (quittingAfterDiagnosticFlush || !diagnosticLogWriter) return
+  if (quittingAfterDiagnosticFlush || (!diagnosticLogWriter && preparedTranscriptions.size === 0 && activeJobs.size === 0)) return
   event.preventDefault()
   quittingAfterDiagnosticFlush = true
-  void flushDiagnosticLogs().finally(() => app.quit())
+  for (const job of activeJobs.values()) job.controller.abort()
+  const prepared = [...preparedTranscriptions.values()]
+  preparedTranscriptions.clear()
+  void Promise.all([
+    ...prepared.map((record) => cleanupPreparedTranscription(record)),
+    pendingTranscriptionQueueWrite,
+    flushDiagnosticLogs(),
+  ]).finally(() => app.quit())
 })
 
 app.on('window-all-closed', () => {
