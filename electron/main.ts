@@ -50,7 +50,11 @@ import {
   readCompletionResponse,
 } from './ai-chat'
 import { resolveProviderSystemPrompt } from './ai-provider-defaults'
-import { generateTranscriptAnalysis } from './analysis'
+import { AnalysisRequestError, generateTranscriptAnalysis } from './analysis'
+import { BackgroundAnalysisQueue } from './analysis-queue'
+import { readBackgroundAnalysisJobs, writeBackgroundAnalysisJobs } from './analysis-queue-store'
+import { planMissingAnalysisJobs } from './analysis-planning'
+import { normalizePreparationPolicy } from './preparation-policy'
 import { ensureHistoryBackup } from './history-recovery'
 import { TranscriptStore } from './transcript-store'
 import { summarizeTranscript } from './transcript-summary'
@@ -81,6 +85,9 @@ import {
   type AIProviderKind,
   type AISettings,
   type AIStreamEvent,
+  type BackgroundAnalysisEvent,
+  type BackgroundAnalysisJob,
+  type BackgroundAnalysisQueueSnapshot,
   type Language,
   type MediaAsset,
   type MediaInfo,
@@ -105,6 +112,8 @@ const preparedTranscriptions = new Map<string, PreparedTranscriptionJob>()
 const activeAIRequests = new Map<string, AbortController>()
 const analysisJsonModeUnsupportedProviders = new Set<string>()
 let pendingTranscriptionQueueWrite: Promise<void> = Promise.resolve()
+let backgroundAnalysisQueueWrite: Promise<void> = Promise.resolve()
+let backgroundAnalysisQueue: BackgroundAnalysisQueue | undefined
 
 interface StoredAIProvider {
   id: string
@@ -131,7 +140,7 @@ interface StoredSettings {
   serviceMode?: ServiceMode
   adaptiveConcurrency?: boolean
   ai?: StoredAISettings
-  preferences?: Partial<AppPreferences>
+  preferences?: Partial<AppPreferences> & { parallelPreparation?: boolean }
   mediaLibraryRoot?: string
 }
 
@@ -196,6 +205,10 @@ function transcriptStoreRoot(): string {
 
 function transcriptionQueuePath(): string {
   return path.join(app.getPath('userData'), 'pending-transcriptions.json')
+}
+
+function backgroundAnalysisQueuePath(): string {
+  return path.join(app.getPath('userData'), 'pending-analysis-jobs.json')
 }
 
 function chatsPath(): string {
@@ -326,13 +339,14 @@ async function readSettings(): Promise<StoredSettings> {
   const stored = await readJson<StoredSettings>(settingsPath(), { language: 'auto', serviceMode: 'payg' })
   const encryptedKeys = { ...stored.encryptedKeys }
   if (stored.encryptedKey && !encryptedKeys.payg) encryptedKeys.payg = stored.encryptedKey
+  const preparationPolicy = normalizePreparationPolicy(stored.preferences || {})
   return {
     language: stored.language || 'auto',
     serviceMode: stored.serviceMode || 'payg',
     adaptiveConcurrency: stored.adaptiveConcurrency !== false,
     encryptedKeys,
     ai: stored.ai,
-    preferences: { ...DEFAULT_APP_PREFERENCES, ...stored.preferences },
+    preferences: { ...DEFAULT_APP_PREFERENCES, ...stored.preferences, ...preparationPolicy },
     mediaLibraryRoot: stored.mediaLibraryRoot,
   }
 }
@@ -868,6 +882,156 @@ async function saveHistory(result: TranscriptResult): Promise<TranscriptSummary>
   return getTranscriptStore().save(result)
 }
 
+function analysisProvider(settings: StoredSettings, providerId?: string): StoredAIProvider | undefined {
+  const resolvedId = providerId || publicAISettings(settings).selectedProviderId
+  return storedAIProviders(settings).find((provider) => provider.id === resolvedId)
+}
+
+function backgroundAnalysisError(message: string, options: { blocked?: boolean; retryable?: boolean; retryAfterMs?: number } = {}): Error {
+  return Object.assign(new Error(message), options)
+}
+
+async function generateAnalysisForTranscript(transcript: TranscriptResult, providerId?: string): Promise<TranscriptResult> {
+  const settings = await readCachedSettings()
+  const provider = analysisProvider(settings, providerId)
+  if (!provider) throw backgroundAnalysisError('AI Provider 不存在', { blocked: true })
+  if (!providerHasKey(settings, provider)) throw backgroundAnalysisError('AI Provider 尚未配置 API Key', { blocked: true })
+  if (provider.kind === 'mimo-token-plan' && settings.ai?.tokenPlanAcknowledged !== true) {
+    throw backgroundAnalysisError('使用 Token Plan 前必须确认其适用范围', { blocked: true })
+  }
+  try {
+    const analysis = await generateTranscriptAnalysis({
+      transcript,
+      provider: {
+        id: provider.id,
+        model: provider.model,
+        baseUrl: provider.baseUrl,
+        maxOutputTokens: provider.maxOutputTokens,
+        jsonMode: provider.kind === 'openai-compatible'
+          ? analysisJsonModeUnsupportedProviders.has(provider.id) ? 'disabled' : 'auto'
+          : 'required',
+      },
+      headers: providerHeaders(provider, providerApiKey(settings, provider)),
+      onAttempt: (diagnostic) => {
+        if (diagnostic.outcome === 'json-mode-fallback') analysisJsonModeUnsupportedProviders.add(provider.id)
+        logDiagnostic('analysis-attempt', {
+          transcriptId: transcript.id,
+          providerId: provider.id,
+          model: provider.model,
+          ...diagnostic,
+        })
+      },
+    })
+    return { ...transcript, analysis }
+  } catch (error) {
+    if (error instanceof AnalysisRequestError) {
+      if (error.status === 401 || error.status === 403) {
+        throw backgroundAnalysisError(error.message, { blocked: true })
+      }
+      if (error.status === 429 || error.status === 503 || error.status >= 500) {
+        throw backgroundAnalysisError(error.message, { retryable: true, retryAfterMs: error.retryAfterMs })
+      }
+    }
+    if (error instanceof TypeError) throw backgroundAnalysisError(error.message, { retryable: true })
+    throw error
+  }
+}
+
+function emitBackgroundAnalysis(window: BrowserWindow, event: BackgroundAnalysisEvent): void {
+  if (!window.isDestroyed()) window.webContents.send('analysis:queue', event)
+}
+
+function enqueueBackgroundAnalysis(result: TranscriptResult, providerId: string, force = false): boolean {
+  if (!backgroundAnalysisQueue || result.outcome === 'failed' || !result.segments.length) return false
+  return backgroundAnalysisQueue.enqueue({
+    transcriptId: result.id,
+    sourceRevision: result.revision ?? 0,
+    providerId,
+    origin: force ? 'manual' : 'automatic',
+    status: 'queued',
+    attempts: 0,
+    queuedAt: new Date().toISOString(),
+  }, force, force)
+}
+
+async function enqueueAutomaticBackgroundAnalysis(result: TranscriptResult): Promise<boolean> {
+  const settings = await readCachedSettings()
+  const preferences = { ...DEFAULT_APP_PREFERENCES, ...settings.preferences }
+  if (!preferences.autoGenerateAnalysis) return false
+  const aiSettings = publicAISettings(settings)
+  const provider = aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)
+  if (!provider?.hasApiKey || provider.kind === 'mimo-token-plan' && !aiSettings.tokenPlanAcknowledged) return false
+  return enqueueBackgroundAnalysis(result, provider.id)
+}
+
+async function syncBackgroundAnalysisQueue(window: BrowserWindow): Promise<BackgroundAnalysisQueueSnapshot> {
+  if (!backgroundAnalysisQueue) return { jobs: [] }
+  const settings = await readCachedSettings()
+  const preferences = { ...DEFAULT_APP_PREFERENCES, ...settings.preferences }
+  backgroundAnalysisQueue.setAutomaticEnabled(preferences.autoGenerateAnalysis)
+  if (!preferences.autoGenerateAnalysis) return backgroundAnalysisQueue.snapshot()
+  const aiSettings = publicAISettings(settings)
+  const availableProviders = new Map(aiSettings.providers.map((provider) => [provider.id, provider]))
+  for (const job of backgroundAnalysisQueue.snapshot().jobs) {
+    if (job.status !== 'blocked') continue
+    const blockedProvider = availableProviders.get(job.providerId)
+    if (blockedProvider?.hasApiKey && (blockedProvider.kind !== 'mimo-token-plan' || aiSettings.tokenPlanAcknowledged)) {
+      backgroundAnalysisQueue.retry(job.transcriptId)
+    }
+  }
+  const provider = aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)
+  const candidates = planMissingAnalysisJobs({
+    summaries: await getTranscriptStore().listSummaries(),
+    existingJobs: backgroundAnalysisQueue.snapshot().jobs,
+    provider,
+    tokenPlanAcknowledged: aiSettings.tokenPlanAcknowledged,
+  })
+  for (const candidate of candidates) backgroundAnalysisQueue.enqueue(candidate)
+  const snapshot = backgroundAnalysisQueue.snapshot()
+  emitBackgroundAnalysis(window, { snapshot })
+  return snapshot
+}
+
+async function createBackgroundAnalysisQueue(window: BrowserWindow): Promise<BackgroundAnalysisQueue> {
+  let queue!: BackgroundAnalysisQueue
+  queue = new BackgroundAnalysisQueue({
+    persist: async (jobs) => {
+      backgroundAnalysisQueueWrite = backgroundAnalysisQueueWrite
+        .catch(() => undefined)
+        .then(() => writeBackgroundAnalysisJobs(backgroundAnalysisQueuePath(), jobs))
+      return backgroundAnalysisQueueWrite
+    },
+    onChange: (snapshot) => emitBackgroundAnalysis(window, { snapshot }),
+    run: async (job) => {
+      const transcript = await getTranscriptStore().get(job.transcriptId)
+      if (!transcript) return
+      const currentRevision = transcript.revision ?? 0
+      if (transcript.analysis?.status === 'ready' && transcript.analysis.sourceRevision === currentRevision) return
+      if (currentRevision !== job.sourceRevision) {
+        enqueueBackgroundAnalysis(transcript, job.providerId)
+        return
+      }
+      const result = await generateAnalysisForTranscript(transcript, job.providerId)
+      const latest = await getTranscriptStore().get(job.transcriptId)
+      if (!latest) return
+      if ((latest.revision ?? 0) !== job.sourceRevision) {
+        enqueueBackgroundAnalysis(latest, job.providerId)
+        return
+      }
+      const completed = await saveHistory(result)
+      logDiagnostic('background-analysis-completed', {
+        transcriptId: result.id,
+        providerId: result.analysis?.providerId,
+        model: result.analysis?.model,
+      })
+      emitBackgroundAnalysis(window, { snapshot: queue.snapshot(), completed })
+    },
+  })
+  queue.setAutomaticEnabled(false)
+  queue.restore(await readBackgroundAnalysisJobs(backgroundAnalysisQueuePath()))
+  return queue
+}
+
 async function scanMediaDirectory(directory: string): Promise<SelectedMedia[]> {
   const selected: SelectedMedia[] = []
   const pending = [directory]
@@ -1308,6 +1472,12 @@ async function transcribePreparedInput(id: string, window: BrowserWindow): Promi
       })),
     }
     await saveHistory(result)
+    void enqueueAutomaticBackgroundAnalysis(result).catch((error) => {
+      logDiagnostic('background-analysis-enqueue-failed', {
+        transcriptId: result.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
     if (input.mediaId) {
       const storedSettings = await readCachedSettings()
       const linked = linkTranscriptToAsset(
@@ -1394,6 +1564,12 @@ app.whenReady().then(async () => {
     return
   }
   const window = createWindow()
+  backgroundAnalysisQueue = await createBackgroundAnalysisQueue(window)
+  void syncBackgroundAnalysisQueue(window).catch((error) => {
+    logDiagnostic('background-analysis-startup-scan-failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
 
   ipcMain.handle('media:open', async (): Promise<SelectedMedia[]> => {
     const result = await dialog.showOpenDialog(window, {
@@ -1724,10 +1900,10 @@ app.whenReady().then(async () => {
     preferences.minimumSilenceSeconds = Math.min(5, Math.max(0.3, Number(preferences.minimumSilenceSeconds) || 0.8))
     preferences.seekSeconds = [5, 10, 15].includes(Number(preferences.seekSeconds)) ? Number(preferences.seekSeconds) : 5
     preferences.seekLeadSeconds = Math.min(2, Math.max(0, Number(preferences.seekLeadSeconds) || 0))
-    preferences.preparationConcurrency = Math.min(4, Math.max(1, Math.round(Number(preferences.preparationConcurrency) || 3)))
-    preferences.parallelPreparation = preferences.parallelPreparation !== false
+    Object.assign(preferences, normalizePreparationPolicy(preferences))
     current.preferences = preferences
     await writeJson(settingsPath(), current); invalidateSettings()
+    void syncBackgroundAnalysisQueue(window).catch(() => undefined)
     return preferences
   })
 
@@ -1764,6 +1940,7 @@ app.whenReady().then(async () => {
       selectedProviderId: validated.id,
     }
     await writeJson(settingsPath(), current); invalidateSettings()
+    void syncBackgroundAnalysisQueue(window).catch(() => undefined)
     return publicAISettings(current)
   })
 
@@ -1778,6 +1955,7 @@ app.whenReady().then(async () => {
       selectedProviderId: current.ai?.selectedProviderId === id ? 'mimo-payg' : current.ai?.selectedProviderId,
     }
     await writeJson(settingsPath(), current); invalidateSettings()
+    void syncBackgroundAnalysisQueue(window).catch(() => undefined)
     return publicAISettings(current)
   })
 
@@ -1786,6 +1964,7 @@ app.whenReady().then(async () => {
     if (!storedAIProviders(current).some((provider) => provider.id === id)) throw new Error('AI Provider 不存在')
     current.ai = { ...current.ai, selectedProviderId: id }
     await writeJson(settingsPath(), current); invalidateSettings()
+    void syncBackgroundAnalysisQueue(window).catch(() => undefined)
     return publicAISettings(current)
   })
 
@@ -1804,6 +1983,7 @@ app.whenReady().then(async () => {
     const current = await readCachedSettings()
     current.ai = { ...current.ai, tokenPlanAcknowledged: true }
     await writeJson(settingsPath(), current); invalidateSettings()
+    void syncBackgroundAnalysisQueue(window).catch(() => undefined)
     return publicAISettings(current)
   })
 
@@ -1922,40 +2102,27 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('ai:analysis:generate', async (_event, input: { transcript: TranscriptResult; providerId?: string }): Promise<TranscriptResult> => {
+  ipcMain.handle('ai:analysis:generate', async (_event, input: { transcriptId: string; providerId?: string }): Promise<BackgroundAnalysisQueueSnapshot> => {
     const settings = await readCachedSettings()
     const providerId = input.providerId || publicAISettings(settings).selectedProviderId
-    const provider = storedAIProviders(settings).find((item) => item.id === providerId)
-    if (!provider) throw new Error('AI Provider 不存在')
-    if (provider.kind === 'mimo-token-plan' && settings.ai?.tokenPlanAcknowledged !== true) {
-      throw new Error('使用 Token Plan 前必须确认其适用范围')
-    }
-    const apiKey = providerApiKey(settings, provider)
-    const analysis = await generateTranscriptAnalysis({
-      transcript: input.transcript,
-      provider: {
-        id: provider.id,
-        model: provider.model,
-        baseUrl: provider.baseUrl,
-        maxOutputTokens: provider.maxOutputTokens,
-        jsonMode: provider.kind === 'openai-compatible'
-          ? analysisJsonModeUnsupportedProviders.has(provider.id) ? 'disabled' : 'auto'
-          : 'required',
-      },
-      headers: providerHeaders(provider, apiKey),
-      onAttempt: (diagnostic) => {
-        if (diagnostic.outcome === 'json-mode-fallback') analysisJsonModeUnsupportedProviders.add(provider.id)
-        logDiagnostic('analysis-attempt', {
-          transcriptId: input.transcript.id,
-          providerId: provider.id,
-          model: provider.model,
-          ...diagnostic,
-        })
-      },
-    })
-    const result = { ...input.transcript, analysis }
-    await saveHistory(result)
-    return result
+    const transcript = await getTranscriptStore().get(input.transcriptId)
+    if (!transcript) throw new Error('未找到该转写记录')
+    if (!backgroundAnalysisQueue) throw new Error('智能速览后台服务尚未就绪')
+    enqueueBackgroundAnalysis(transcript, providerId, true)
+    return backgroundAnalysisQueue.snapshot()
+  })
+
+  ipcMain.handle('ai:analysis:queue:get', (): BackgroundAnalysisQueueSnapshot =>
+    backgroundAnalysisQueue?.snapshot() || { jobs: [] })
+
+  ipcMain.handle('ai:analysis:retry', async (_event, transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot> => {
+    if (!backgroundAnalysisQueue) throw new Error('智能速览后台服务尚未就绪')
+    if (backgroundAnalysisQueue.retry(transcriptId, 'manual')) return backgroundAnalysisQueue.snapshot()
+    const settings = await readCachedSettings()
+    const transcript = await getTranscriptStore().get(transcriptId)
+    if (!transcript) throw new Error('未找到该转写记录')
+    enqueueBackgroundAnalysis(transcript, publicAISettings(settings).selectedProviderId, true)
+    return backgroundAnalysisQueue.snapshot()
   })
 
   ipcMain.handle('history:get', async () => {
@@ -2016,6 +2183,7 @@ app.whenReady().then(async () => {
   async function deleteTranscriptRecords(ids: string[]): Promise<string[]> {
     const deleted = await getTranscriptStore().deleteMany(ids)
     if (!deleted.length) return []
+    for (const id of deleted) backgroundAnalysisQueue?.remove(id)
     const deletedSet = new Set(deleted)
     const sessions = await readChatSessions()
     for (const id of deleted) delete sessions[id]
@@ -2056,7 +2224,10 @@ app.whenReady().then(async () => {
 
 let quittingAfterDiagnosticFlush = false
 app.on('before-quit', (event) => {
-  if (quittingAfterDiagnosticFlush || (!diagnosticLogWriter && preparedTranscriptions.size === 0 && activeJobs.size === 0)) return
+  if (quittingAfterDiagnosticFlush || (!diagnosticLogWriter
+    && preparedTranscriptions.size === 0
+    && activeJobs.size === 0
+    && !backgroundAnalysisQueue?.snapshot().jobs.length)) return
   event.preventDefault()
   quittingAfterDiagnosticFlush = true
   for (const job of activeJobs.values()) job.controller.abort()
@@ -2065,6 +2236,7 @@ app.on('before-quit', (event) => {
   void Promise.all([
     ...prepared.map((record) => cleanupPreparedTranscription(record)),
     pendingTranscriptionQueueWrite,
+    backgroundAnalysisQueueWrite,
     flushDiagnosticLogs(),
   ]).finally(() => app.quit())
 })

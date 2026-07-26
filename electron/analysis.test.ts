@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TranscriptResult } from './types'
-import { buildAnalysisRequestBody, generateTranscriptAnalysis, isJsonModeUnsupported, parseAnalysisJson } from './analysis'
+import { AnalysisRequestError, buildAnalysisRequestBody, generateTranscriptAnalysis, isJsonModeUnsupported, parseAnalysisJson } from './analysis'
 
 const transcript: TranscriptResult = {
   id: 'transcript-1',
@@ -73,5 +73,19 @@ describe('smart analysis requests', () => {
     expect(result.overview).toBe('兼容模式概述')
     const fallbackBody = JSON.parse(String(fetcher.mock.calls[1][1]?.body))
     expect(fallbackBody).not.toHaveProperty('response_format')
+  })
+
+  it('preserves rate-limit status and Retry-After for the background queue', async () => {
+    const request = generateTranscriptAnalysis({
+      transcript,
+      provider: { id: 'mimo-payg', model: 'mimo-v2.5', baseUrl: 'https://example.test/v1', maxOutputTokens: 4096, jsonMode: 'required' },
+      headers: { 'api-key': 'secret' },
+      fetcher: async () => new Response(JSON.stringify({ error: { message: 'busy' } }), {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'retry-after': '2' },
+      }),
+    })
+
+    await expect(request).rejects.toMatchObject({ status: 503, retryAfterMs: 2_000 } satisfies Partial<AnalysisRequestError>)
   })
 })

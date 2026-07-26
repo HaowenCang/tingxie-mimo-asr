@@ -990,6 +990,9 @@ html[data-theme='dark'] .settings-modal { background: linear-gradient(145deg,rgb
 .batch-pipeline-preview small, .batch-skip-summary { color: var(--muted); font-size: var(--caption-font-size); line-height: 1.45; }
 .batch-skip-summary { display: flex; flex-wrap: wrap; gap: 6px; }
 .batch-skip-summary span { padding: 4px 8px; border-radius: 999px; background: rgba(112,122,142,.1); }
+.settings-number-input { width: 100%; min-height: 38px; padding: 0 11px; border: 1px solid rgba(91,113,148,.18); border-radius: 11px; color: var(--text); background: rgba(255,255,255,.48); font: inherit; outline: none; }
+.settings-number-input:focus { border-color: rgba(10,132,255,.48); box-shadow: 0 0 0 3px rgba(10,132,255,.11); }
+.settings-warning { margin: 2px 0 0; padding: 10px 12px; border: 1px solid rgba(219,145,44,.22); border-radius: 12px; color: #98631d; background: rgba(255,244,219,.42); font-size: var(--caption-font-size); line-height: 1.55; }
 .batch-retry-setting { margin: 0; }
 .batch-transcription-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
 .delete-folder-icon { width: 48px; height: 48px; margin: 0 auto; border-radius: 16px; display: grid; place-items: center; color: var(--red); background: rgba(255,225,230,.68); }

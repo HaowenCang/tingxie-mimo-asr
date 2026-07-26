@@ -42,6 +42,25 @@ describe('smart analysis error state', () => {
     expect(markup).toContain('AI 未返回 JSON 对象')
     expect(markup).toContain('重试')
   })
+
+  it('shows persisted background queue states without blocking the transcript detail', () => {
+    const markup = renderToStaticMarkup(<TranscriptDetail
+      result={{ ...transcript, analysis: undefined }}
+      preferences={DEFAULT_APP_PREFERENCES}
+      onChange={() => undefined}
+      onGenerateAnalysis={async () => undefined}
+      onExport={() => undefined}
+      onOpenChat={() => undefined}
+      onNewTranscript={() => undefined}
+      analysisBusy
+      analysisError=""
+      analysisStatus="queued"
+    />)
+
+    expect(markup).toContain('已加入后台队列')
+    expect(markup).toContain('等待生成')
+    expect(markup).toContain('disabled')
+  })
 })
 
 describe('chapter navigation', () => {

@@ -131,7 +131,7 @@ export interface TranscriptChapter {
 }
 
 export interface TranscriptAnalysis {
-  status: 'ready' | 'error'
+  status: 'ready' | 'error' | 'stale'
   overview: string
   keywords: string[]
   chapters: TranscriptChapter[]
@@ -141,6 +141,7 @@ export interface TranscriptAnalysis {
   providerId: string
   model: string
   generatedAt: string
+  sourceRevision?: number
   error?: string
 }
 
@@ -164,6 +165,7 @@ export interface TranscriptResult {
 
 export interface TranscriptSummary {
   id: string
+  revision?: number
   folderId?: string
   fileName: string
   createdAt: string
@@ -174,7 +176,31 @@ export interface TranscriptSummary {
   mediaId?: string
   sourceAvailable: boolean
   preview: string
-  analysisStatus: 'none' | 'ready' | 'error'
+  analysisStatus: 'none' | 'ready' | 'error' | 'stale'
+}
+
+export type BackgroundAnalysisJobStatus = 'queued' | 'running' | 'retry-wait' | 'blocked' | 'failed'
+
+export interface BackgroundAnalysisJob {
+  transcriptId: string
+  sourceRevision: number
+  providerId: string
+  origin: 'automatic' | 'manual'
+  status: BackgroundAnalysisJobStatus
+  attempts: number
+  queuedAt: string
+  nextRetryAt?: string
+  error?: string
+}
+
+export interface BackgroundAnalysisQueueSnapshot {
+  jobs: BackgroundAnalysisJob[]
+  activeTranscriptId?: string
+}
+
+export interface BackgroundAnalysisEvent {
+  snapshot: BackgroundAnalysisQueueSnapshot
+  completed?: TranscriptSummary
 }
 
 export interface TranscriptDuplicateReport {
@@ -193,6 +219,7 @@ export type AppTheme = 'system' | 'light' | 'dark'
 export type AccentColor = 'blue' | 'purple' | 'teal'
 export type ContentDensity = 'comfortable' | 'compact'
 export type ParagraphLength = 'compact' | 'standard' | 'long'
+export type PreparationMode = 'sequential' | 'fixed' | 'unlimited'
 
 export interface AppPreferences {
   theme: AppTheme
@@ -221,7 +248,7 @@ export interface AppPreferences {
   autoFollow: boolean
   seekLeadSeconds: number
   autoGenerateAnalysis: boolean
-  parallelPreparation: boolean
+  preparationMode: PreparationMode
   preparationConcurrency: number
 }
 
@@ -252,7 +279,7 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   autoFollow: true,
   seekLeadSeconds: 0.5,
   autoGenerateAnalysis: false,
-  parallelPreparation: true,
+  preparationMode: 'fixed',
   preparationConcurrency: 3,
 }
 

@@ -98,7 +98,13 @@ export class TranscriptStore {
     const segmentIndex = result.segments.findIndex((segment, index) => (segment.id || `segment-${index}`) === segmentId)
     if (segmentIndex < 0) throw new Error('未找到该转写段落')
     const segments = result.segments.map((segment, index) => index === segmentIndex ? { ...segment, ...patch } : segment)
-    const updated = { ...result, revision: (result.revision ?? 0) + 1, segments, text: segments.map(segmentText).join('\n\n') }
+    const updated = {
+      ...result,
+      revision: (result.revision ?? 0) + 1,
+      segments,
+      text: segments.map(segmentText).join('\n\n'),
+      analysis: result.analysis ? { ...result.analysis, status: 'stale' as const } : undefined,
+    }
     await this.save(updated)
     return updated
   }

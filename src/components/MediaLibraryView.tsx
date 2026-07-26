@@ -404,7 +404,7 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
       <h2 id="batch-transcription-title">批量新增转写任务</h2>
       <p>将加入 <strong>{batchEligibleAssets.length}</strong> 个媒体，共 {formatDuration(batchDuration)}、{formatBytes(batchBytes)}。</p>
       <div className="batch-pipeline-preview">
-        <span><b>本地准备</b><small>{preferences.parallelPreparation ? `最多 ${preferences.preparationConcurrency} 个音频并行切片` : '严格逐个准备'}</small></span>
+        <span><b>本地准备</b><small>{preferences.preparationMode === 'unlimited' ? `无限制，本批次可同时准备 ${batchPlan.eligible.length} 个音频` : preferences.preparationMode === 'fixed' ? `最多 ${preferences.preparationConcurrency} 个音频并行切片` : '严格逐个准备'}</small></span>
         <ChevronRight size={16} />
         <span><b>API 转写</b><small>媒体之间严格按队列顺序；单个媒体内部仍使用现有自适应并发</small></span>
       </div>

@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from '../electron/types'
 
 declare global {
   interface Window {
@@ -41,7 +41,10 @@ declare global {
       getAIChat(transcriptId: string): Promise<AIChatSession>
       clearAIChat(transcriptId: string): Promise<AIChatSession>
       sendAIMessage(input: { requestId: string; transcript: TranscriptResult; providerId?: string; userMessage?: string; mode?: 'new' | 'regenerate' }): Promise<AIChatSession>
-      generateAnalysis(input: { transcript: TranscriptResult; providerId?: string }): Promise<TranscriptResult>
+      generateAnalysis(input: { transcriptId: string; providerId?: string }): Promise<BackgroundAnalysisQueueSnapshot>
+      getAnalysisQueue(): Promise<BackgroundAnalysisQueueSnapshot>
+      retryAnalysis(transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot>
+      onAnalysisQueue(callback: (event: BackgroundAnalysisEvent) => void): () => void
       cancelAIMessage(requestId: string): Promise<boolean>
       onAIStream(callback: (event: AIStreamEvent) => void): () => void
       getHistory(): Promise<TranscriptSummary[]>
