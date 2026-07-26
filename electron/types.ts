@@ -179,7 +179,7 @@ export interface TranscriptSummary {
   analysisStatus: 'none' | 'ready' | 'error' | 'stale'
 }
 
-export type BackgroundAnalysisJobStatus = 'queued' | 'running' | 'retry-wait' | 'blocked' | 'failed'
+export type BackgroundAnalysisJobStatus = 'queued' | 'running' | 'retry-wait' | 'blocked' | 'failed' | 'dismissed'
 
 export interface BackgroundAnalysisJob {
   transcriptId: string

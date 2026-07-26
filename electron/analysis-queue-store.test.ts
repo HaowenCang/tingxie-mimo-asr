@@ -15,15 +15,26 @@ describe('background analysis queue store', () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'tingxie-analysis-queue-'))
     directories.push(directory)
     const file = path.join(directory, 'pending-analysis-jobs.json')
-    const jobs = [{
-      transcriptId: 'transcript-1',
-      sourceRevision: 2,
-      providerId: 'provider-1',
-      origin: 'automatic' as const,
-      status: 'queued' as const,
-      attempts: 0,
-      queuedAt: '2026-07-27T00:00:00.000Z',
-    }]
+    const jobs = [
+      {
+        transcriptId: 'transcript-1',
+        sourceRevision: 2,
+        providerId: 'provider-1',
+        origin: 'automatic' as const,
+        status: 'queued' as const,
+        attempts: 0,
+        queuedAt: '2026-07-27T00:00:00.000Z',
+      },
+      {
+        transcriptId: 'transcript-dismissed',
+        sourceRevision: 4,
+        providerId: 'provider-1',
+        origin: 'automatic' as const,
+        status: 'dismissed' as const,
+        attempts: 1,
+        queuedAt: '2026-07-27T00:01:00.000Z',
+      },
+    ]
 
     await writeBackgroundAnalysisJobs(file, jobs)
     expect(await readBackgroundAnalysisJobs(file)).toEqual(jobs)
