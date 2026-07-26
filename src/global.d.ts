@@ -44,6 +44,7 @@ declare global {
       generateAnalysis(input: { transcriptId: string; providerId?: string }): Promise<BackgroundAnalysisQueueSnapshot>
       getAnalysisQueue(): Promise<BackgroundAnalysisQueueSnapshot>
       retryAnalysis(transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot>
+      dismissAnalysis(transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot>
       onAnalysisQueue(callback: (event: BackgroundAnalysisEvent) => void): () => void
       cancelAIMessage(requestId: string): Promise<boolean>
       onAIStream(callback: (event: AIStreamEvent) => void): () => void

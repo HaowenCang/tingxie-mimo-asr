@@ -7,7 +7,7 @@ interface StoredBackgroundAnalysisQueue {
   jobs: BackgroundAnalysisJob[]
 }
 
-const STATUSES = new Set<BackgroundAnalysisJobStatus>(['queued', 'running', 'retry-wait', 'blocked', 'failed'])
+const STATUSES = new Set<BackgroundAnalysisJobStatus>(['queued', 'running', 'retry-wait', 'blocked', 'failed', 'dismissed'])
 
 function validJob(value: unknown): value is BackgroundAnalysisJob {
   if (!value || typeof value !== 'object') return false

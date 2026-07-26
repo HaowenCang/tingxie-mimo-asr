@@ -149,4 +149,24 @@ describe('background analysis queue', () => {
     await queue.whenIdle()
     expect(started).toEqual(['active'])
   })
+
+  it('persists dismissal for the current revision and allows a later manual override', async () => {
+    const started: string[] = []
+    const queue = new BackgroundAnalysisQueue({
+      run: async (entry) => { started.push(entry.transcriptId) },
+    })
+    queue.setAutomaticEnabled(false)
+    const automatic = job('dismissed', 4)
+
+    expect(queue.dismiss(automatic)).toBe(true)
+    expect(queue.snapshot().jobs).toEqual([
+      expect.objectContaining({ transcriptId: 'dismissed', sourceRevision: 4, status: 'dismissed' }),
+    ])
+    expect(queue.enqueue(automatic)).toBe(false)
+    expect(queue.enqueue({ ...automatic, origin: 'manual' }, true, true)).toBe(true)
+
+    await queue.whenIdle()
+    expect(started).toEqual(['dismissed'])
+    expect(queue.snapshot().jobs).toEqual([])
+  })
 })

@@ -2125,6 +2125,26 @@ app.whenReady().then(async () => {
     return backgroundAnalysisQueue.snapshot()
   })
 
+  ipcMain.handle('ai:analysis:dismiss', async (_event, transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot> => {
+    if (!backgroundAnalysisQueue) throw new Error('智能速览后台服务尚未就绪')
+    const transcript = await getTranscriptStore().get(transcriptId)
+    if (!transcript) throw new Error('未找到该转写记录')
+    const sourceRevision = transcript.revision ?? 0
+    const existing = backgroundAnalysisQueue.snapshot().jobs.find((job) =>
+      job.transcriptId === transcriptId && job.sourceRevision === sourceRevision)
+    const settings = await readCachedSettings()
+    backgroundAnalysisQueue.dismiss(existing || {
+      transcriptId,
+      sourceRevision,
+      providerId: publicAISettings(settings).selectedProviderId,
+      origin: 'automatic',
+      status: 'queued',
+      attempts: 0,
+      queuedAt: new Date().toISOString(),
+    })
+    return backgroundAnalysisQueue.snapshot()
+  })
+
   ipcMain.handle('history:get', async () => {
     await ensureHistoryBackup(historyPath(), historyRecoveryBackupPath())
     return getTranscriptStore().listSummaries()

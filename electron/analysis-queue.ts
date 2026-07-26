@@ -75,6 +75,29 @@ export class BackgroundAnalysisQueue {
     this.resolveIdle()
   }
 
+  dismiss(input: BackgroundAnalysisJob): boolean {
+    const active = this.jobs.find((job) =>
+      job.transcriptId === input.transcriptId
+      && job.sourceRevision === input.sourceRevision
+      && job.status === 'running')
+    if (active) return false
+    const previous = this.jobs.find((job) =>
+      job.transcriptId === input.transcriptId
+      && job.sourceRevision === input.sourceRevision)
+    if (previous?.status === 'dismissed') return false
+    this.jobs = this.jobs.filter((job) => job.transcriptId !== input.transcriptId || job.status === 'running')
+    this.jobs.push({
+      ...input,
+      status: 'dismissed',
+      attempts: previous?.attempts ?? input.attempts,
+      nextRetryAt: undefined,
+      error: undefined,
+    })
+    this.changed()
+    this.resolveIdle()
+    return true
+  }
+
   retry(transcriptId: string, origin?: BackgroundAnalysisJob['origin']): boolean {
     const job = this.jobs.find((entry) => entry.transcriptId === transcriptId && (entry.status === 'failed' || entry.status === 'blocked'))
     if (!job) return false

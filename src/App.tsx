@@ -1,4 +1,4 @@
-import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
+import { Circle, CircleCheck, LoaderCircle, Sparkles, WifiOff } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type BackgroundAnalysisQueueSnapshot, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type PreparedTranscription, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
@@ -10,6 +10,7 @@ import { clampLayoutValue, DEFAULT_SIDEBAR_WIDTH, DEFAULT_UPLOAD_PANE_HEIGHT } f
 import { clampChatPanelWidth, DEFAULT_CHAT_PANEL_WIDTH, PanelResizeHandle } from './components/PanelResizeHandle'
 import { Sidebar } from './components/Sidebar'
 import { addRecentTranscript } from './components/recent-transcripts'
+import { buildAnalysisQueueView } from './components/analysis-queue-view-model'
 import { UploadZone } from './components/UploadZone'
 import type { AppSettings, QueueFile } from './types'
 import { friendlyIpcError } from './utils'
@@ -24,6 +25,7 @@ const AIChatPanel = lazy(() => import('./components/AIChatPanel').then((module) 
 const MediaLibraryView = lazy(() => import('./components/MediaLibraryView').then((module) => ({ default: module.MediaLibraryView })))
 const SettingsModal = lazy(() => import('./components/SettingsModal').then((module) => ({ default: module.SettingsModal })))
 const TranscriptDetail = lazy(() => import('./components/TranscriptDetail').then((module) => ({ default: module.TranscriptDetail })))
+const AnalysisQueuePanel = lazy(() => import('./components/AnalysisQueuePanel').then((module) => ({ default: module.AnalysisQueuePanel })))
 
 function DeferredView({ label, className = 'deferred-view' }: { label: string; className?: string }) {
   return <div className={className} role="status"><LoaderCircle className="spin" size={20} />{label}</div>
@@ -50,6 +52,7 @@ const isQueueEmptyDemo = isDemo && demoParameters.has('queue-empty')
 const isLongNameDemo = isDemo && demoParameters.has('long-name')
 const isLegacyHistoryDemo = isDemo && demoParameters.has('legacy-history')
 const isDuplicateDemo = isDemo && demoParameters.has('duplicate-transcript')
+const isAnalysisQueueDemo = isDemo && demoParameters.has('analysis-queue')
 const demoLongText = '这是用于验证超长转写排版的演示文本，每一句都应连续排列，不应在下一个时间段之前留下大段空白。'.repeat(260)
 
 const demoRepeatedText = '所以这是一个现代化的高速公路体系，就是和全球对接的一个高速公路体系。如果没有这个高速公路体系，中国的创新药有一个全球标准和全球路径，这是非常重要的。'
@@ -107,7 +110,38 @@ const demoLegacyResult: TranscriptResult = {
 const demoHistory = [
   ...demoFiles.flatMap((file) => file.result ? [summarizeTranscript(file.result)] : []),
   ...(isLegacyHistoryDemo ? [summarizeTranscript(demoLegacyResult)] : []),
+  ...(isAnalysisQueueDemo ? [
+    { ...summarizeTranscript(demoResult), id: 'analysis-missing', fileName: '历史访谈（尚未生成速览）.mp3', analysisStatus: 'none' as const },
+    { ...summarizeTranscript(demoResult), id: 'analysis-stale', revision: 2, fileName: '项目评审（原文已修改）.wav', analysisStatus: 'stale' as const },
+    { ...summarizeTranscript(demoResult), id: 'analysis-error', fileName: '客户研究（上次生成失败）.m4a', analysisStatus: 'error' as const },
+    { ...summarizeTranscript(demoResult), id: 'analysis-running', fileName: '年度规划会议.mp4', analysisStatus: 'none' as const },
+  ] : []),
 ]
+
+const demoAnalysisQueue: BackgroundAnalysisQueueSnapshot = isAnalysisQueueDemo ? {
+  activeTranscriptId: 'analysis-running',
+  jobs: [
+    {
+      transcriptId: 'analysis-running',
+      sourceRevision: 0,
+      providerId: 'mimo-payg',
+      origin: 'automatic',
+      status: 'running',
+      attempts: 1,
+      queuedAt: new Date().toISOString(),
+    },
+    {
+      transcriptId: 'analysis-failed',
+      sourceRevision: 0,
+      providerId: 'mimo-payg',
+      origin: 'automatic',
+      status: 'failed',
+      attempts: 3,
+      queuedAt: new Date(Date.now() - 600_000).toISOString(),
+      error: 'AI 返回的 JSON 结构无效',
+    },
+  ],
+} : { jobs: [] }
 
 const initialAISettings: AISettings = {
   providers: [
@@ -165,8 +199,9 @@ export function App() {
   const [chatOpen, setChatOpen] = useState(isDemo && demoParameters.has('markdown'))
   const [history, setHistory] = useState<TranscriptSummary[]>(isDemo ? demoHistory : [])
   const [loadingSettings, setLoadingSettings] = useState(!isDemo)
-  const [analysisQueue, setAnalysisQueue] = useState<BackgroundAnalysisQueueSnapshot>({ jobs: [] })
+  const [analysisQueue, setAnalysisQueue] = useState<BackgroundAnalysisQueueSnapshot>(demoAnalysisQueue)
   const [analysisLocalError, setAnalysisLocalError] = useState(isDemo && demoParameters.has('analysis-error') ? 'AI 返回的 JSON 格式无效；已自动修复重试 1 次，请稍后重试。' : '')
+  const [showAnalysisQueue, setShowAnalysisQueue] = useState(isAnalysisQueueDemo)
   const [chatPanelWidth, setChatPanelWidth] = useState(DEFAULT_CHAT_PANEL_WIDTH)
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [uploadPaneHeight, setUploadPaneHeight] = useState(DEFAULT_UPLOAD_PANE_HEIGHT)
@@ -565,11 +600,10 @@ export function App() {
     setRecentTranscripts((current) => current.flatMap((item) => byId.has(item.id) ? [byId.get(item.id)!] : []))
   }, [])
 
-  const generateAnalysis = useCallback(async () => {
-    if (!selectedResult) return
+  const enqueueAnalysis = useCallback(async (transcriptId: string) => {
     const provider = aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)
     if (!provider?.hasApiKey) {
-      setSettingsSection('ai'); setShowSettings(true)
+      setShowAnalysisQueue(false); setSettingsSection('ai'); setShowSettings(true)
       return
     }
     if (provider.kind === 'mimo-token-plan' && !aiSettings.tokenPlanAcknowledged) {
@@ -580,11 +614,44 @@ export function App() {
     if (!window.tingxie) return
     setAnalysisLocalError('')
     try {
-      setAnalysisQueue(await window.tingxie.generateAnalysis({ transcriptId: selectedResult.id, providerId: provider.id }))
+      setAnalysisQueue(await window.tingxie.generateAnalysis({ transcriptId, providerId: provider.id }))
     } catch (error) {
-      setAnalysisLocalError(friendlyIpcError(error, '智能速览生成失败'))
+      const message = friendlyIpcError(error, '智能速览生成失败')
+      setAnalysisLocalError(message)
+      throw new Error(message)
     }
-  }, [selectedResult, aiSettings])
+  }, [aiSettings])
+
+  const generateAnalysis = useCallback(async () => {
+    if (selectedResult) await enqueueAnalysis(selectedResult.id)
+  }, [selectedResult, enqueueAnalysis])
+
+  const retryAnalysis = useCallback(async (transcriptId: string) => {
+    const queued = analysisQueue.jobs.find((job) => job.transcriptId === transcriptId && job.status !== 'dismissed')
+    const provider = aiSettings.providers.find((item) => item.id === (queued?.providerId || aiSettings.selectedProviderId))
+    if (!provider?.hasApiKey) {
+      setShowAnalysisQueue(false); setSettingsSection('ai'); setShowSettings(true)
+      return
+    }
+    if (provider.kind === 'mimo-token-plan' && !aiSettings.tokenPlanAcknowledged) {
+      const accepted = window.confirm('Token Plan 官方适用范围主要为 Coding 场景。确认了解风险并继续重试智能速览吗？')
+      if (!accepted) return
+      if (window.tingxie) setAISettings(await window.tingxie.acknowledgeTokenPlan())
+    }
+    if (!window.tingxie) return
+    try {
+      setAnalysisQueue(await window.tingxie.retryAnalysis(transcriptId))
+    } catch (error) {
+      const message = friendlyIpcError(error, '智能速览重试失败')
+      setAnalysisLocalError(message)
+      throw new Error(message)
+    }
+  }, [aiSettings, analysisQueue.jobs])
+
+  const dismissAnalysis = useCallback(async (transcriptId: string) => {
+    if (!window.tingxie) return
+    setAnalysisQueue(await window.tingxie.dismissAnalysis(transcriptId))
+  }, [])
 
   const exportSelectedResult = useCallback(() => {
     if (selectedResult) void window.tingxie?.exportTranscript(selectedResult)
@@ -600,14 +667,15 @@ export function App() {
 
   const doneCount = files.filter((file) => file.status === 'done').length
   const selectedAnalysisJob = selectedResult
-    ? analysisQueue.jobs.find((job) => job.transcriptId === selectedResult.id)
+    ? analysisQueue.jobs.find((job) => job.transcriptId === selectedResult.id && job.status !== 'dismissed')
     : undefined
   const analysisBusy = selectedAnalysisJob
     ? ['queued', 'running', 'retry-wait'].includes(selectedAnalysisJob.status)
     : false
   const analysisError = analysisLocalError
     || (selectedAnalysisJob?.status === 'blocked' || selectedAnalysisJob?.status === 'failed' ? selectedAnalysisJob.error || '智能速览生成失败' : '')
-  const pendingAnalysisCount = analysisQueue.jobs.filter((job) => ['queued', 'running', 'retry-wait'].includes(job.status)).length
+  const analysisQueueItems = useMemo(() => buildAnalysisQueueView({ history, jobs: analysisQueue.jobs }), [history, analysisQueue.jobs])
+  const pendingAnalysisCount = analysisQueueItems.filter((item) => ['queued', 'running', 'retry-wait'].includes(item.status)).length
   const queuedMediaIds = useMemo(() => new Set(files.flatMap((file) =>
     file.mediaId && !['done', 'partial', 'error', 'cancelled'].includes(file.status) ? [file.mediaId] : [])), [files])
   const isWorking = files.some((file) => ['waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing'].includes(file.status))
@@ -691,7 +759,7 @@ export function App() {
         </AnimatePresence>
       {currentPage === 'new' && <footer className="status-bar">
         <span><Circle className={isWorking ? 'pulse-dot' : ''} size={9} fill="currentColor" />{files.length} 个文件<span>·</span>{doneCount} 个已完成</span>
-        <span>{pendingAnalysisCount > 0 ? `智能速览后台任务 ${pendingAnalysisCount} 个` : isWorking ? '正在本机处理音频' : '就绪'}</span>
+        <button className="analysis-queue-trigger" onClick={() => setShowAnalysisQueue(true)}><Sparkles size={13} />智能速览队列 {analysisQueueItems.length}{pendingAnalysisCount > 0 && <i>{pendingAnalysisCount} 处理中</i>}</button>
       </footer>}
       <AnimatePresence initial={false}>
       {showSettings && <Suspense key="settings" fallback={<div className="modal-backdrop"><DeferredView className="settings-modal deferred-panel" label="正在打开设置" /></div>}><SettingsModal
@@ -716,6 +784,21 @@ export function App() {
         onDeleteAIProvider={async (id) => window.tingxie ? window.tingxie.deleteAIProvider(id) : aiSettings}
         onSelectAIProvider={async (id) => window.tingxie ? window.tingxie.selectAIProvider(id) : { ...aiSettings, selectedProviderId: id }}
         onTestAIProvider={async (input) => { if (window.tingxie) await window.tingxie.testAIProvider(input) }}
+      /></Suspense>}
+      {showAnalysisQueue && <Suspense fallback={<div className="analysis-queue-backdrop"><DeferredView className="analysis-queue-panel deferred-panel" label="正在打开智能速览队列" /></div>}><AnalysisQueuePanel
+        snapshot={analysisQueue}
+        history={history}
+        preferences={settings.preferences}
+        providerName={aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)?.name}
+        providerConfigured={Boolean(aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)?.hasApiKey)}
+        onClose={() => setShowAnalysisQueue(false)}
+        onOpen={(transcriptId) => {
+          const item = history.find((entry) => entry.id === transcriptId)
+          if (item) { void openTranscript(item); setShowAnalysisQueue(false) }
+        }}
+        onGenerate={enqueueAnalysis}
+        onRetry={retryAnalysis}
+        onDismiss={dismissAnalysis}
       /></Suspense>}
       </AnimatePresence>
     </div>

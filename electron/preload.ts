@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('tingxie', {
   generateAnalysis: (input: { transcriptId: string; providerId?: string }): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:generate', input),
   getAnalysisQueue: (): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:queue:get'),
   retryAnalysis: (transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:retry', transcriptId),
+  dismissAnalysis: (transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:dismiss', transcriptId),
   onAnalysisQueue: (callback: (event: BackgroundAnalysisEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: BackgroundAnalysisEvent) => callback(value)
     ipcRenderer.on('analysis:queue', listener)
