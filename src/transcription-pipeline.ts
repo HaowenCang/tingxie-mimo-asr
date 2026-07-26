@@ -19,8 +19,8 @@ export interface TranscriptionPipelineEvent<Job, Result> {
 }
 
 interface TranscriptionPipelineOptions<Job extends TranscriptionPipelineJob, Prepared, Result> {
-  preparationConcurrency: number
-  preparationWindow?: number
+  preparationConcurrency: number | 'unlimited'
+  preparationWindow?: number | 'unlimited'
   prepare(job: Job, signal: AbortSignal): Promise<Prepared>
   transcribe(job: Job, prepared: Prepared, signal: AbortSignal): Promise<Result>
   discardPrepared?(job: Job, prepared: Prepared): void | Promise<void>
@@ -45,8 +45,8 @@ export class TranscriptionPipeline<Job extends TranscriptionPipelineJob, Prepare
   private preparationWindow: number
 
   constructor(private readonly options: TranscriptionPipelineOptions<Job, Prepared, Result>) {
-    this.preparationConcurrency = Math.max(1, Math.floor(options.preparationConcurrency))
-    this.preparationWindow = Math.max(this.preparationConcurrency, Math.floor(options.preparationWindow ?? this.preparationConcurrency))
+    this.preparationConcurrency = this.normalizeLimit(options.preparationConcurrency)
+    this.preparationWindow = this.normalizeWindow(options.preparationWindow ?? options.preparationConcurrency)
   }
 
   enqueue(jobs: Job[]): void {
@@ -85,9 +85,9 @@ export class TranscriptionPipeline<Job extends TranscriptionPipelineJob, Prepare
     return new Promise((resolve) => this.idleWaiters.add(resolve))
   }
 
-  setPreparationPolicy(concurrency: number, window = concurrency): void {
-    this.preparationConcurrency = Math.max(1, Math.floor(concurrency))
-    this.preparationWindow = Math.max(this.preparationConcurrency, Math.floor(window))
+  setPreparationPolicy(concurrency: number | 'unlimited', window: number | 'unlimited' = concurrency): void {
+    this.preparationConcurrency = this.normalizeLimit(concurrency)
+    this.preparationWindow = this.normalizeWindow(window)
     this.pumpPreparation()
   }
 
@@ -99,9 +99,8 @@ export class TranscriptionPipeline<Job extends TranscriptionPipelineJob, Prepare
     const limit = this.preparationConcurrency
     const windowSize = this.preparationWindow
     while (this.preparing < limit) {
-      const task = this.tasks
-        .filter((candidate) => !TERMINAL_STATUSES.has(candidate.status))
-        .slice(0, windowSize)
+      const activeTasks = this.tasks.filter((candidate) => !TERMINAL_STATUSES.has(candidate.status))
+      const task = (Number.isFinite(windowSize) ? activeTasks.slice(0, windowSize) : activeTasks)
         .find((candidate) => candidate.status === 'waiting-preparation')
       if (!task) break
       task.status = 'preparing'
@@ -172,5 +171,14 @@ export class TranscriptionPipeline<Job extends TranscriptionPipelineJob, Prepare
     if (!this.isIdle()) return
     for (const resolve of this.idleWaiters) resolve()
     this.idleWaiters.clear()
+  }
+
+  private normalizeLimit(value: number | 'unlimited'): number {
+    return value === 'unlimited' ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(value))
+  }
+
+  private normalizeWindow(value: number | 'unlimited'): number {
+    const window = this.normalizeLimit(value)
+    return Math.max(this.preparationConcurrency, window)
   }
 }

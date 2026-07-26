@@ -157,4 +157,59 @@ describe('transcription pipeline', () => {
     gates.forEach((gate) => gate.resolve('prepared'))
     await pipeline.whenIdle()
   })
+
+  it('accepts arbitrary fixed preparation concurrency without imposing a product cap', async () => {
+    const gates = new Map(Array.from({ length: 8 }, (_, index) => {
+      const id = String(index + 1)
+      return [id, deferred<string>()] as const
+    }))
+    const preparing: string[] = []
+    const pipeline = new TranscriptionPipeline({
+      preparationConcurrency: 1,
+      prepare: async (job) => {
+        preparing.push(job.id)
+        return gates.get(job.id)!.promise
+      },
+      transcribe: async (job) => `result-${job.id}`,
+    })
+
+    pipeline.enqueue([...gates.keys()].map((id) => ({ id })))
+    pipeline.setPreparationPolicy(7)
+    await nextTurn()
+    expect(preparing).toEqual(['1', '2', '3', '4', '5', '6', '7'])
+
+    gates.forEach((gate) => gate.resolve('prepared'))
+    await pipeline.whenIdle()
+  })
+
+  it('prepares every queued media in unlimited mode while keeping the API channel sequential', async () => {
+    const ids = Array.from({ length: 12 }, (_, index) => String(index + 1))
+    const preparations = new Map(ids.map((id) => [id, deferred<string>()]))
+    const firstTranscription = deferred<string>()
+    const preparing: string[] = []
+    const transcribing: string[] = []
+    const pipeline = new TranscriptionPipeline({
+      preparationConcurrency: 'unlimited',
+      prepare: async (job) => {
+        preparing.push(job.id)
+        return preparations.get(job.id)!.promise
+      },
+      transcribe: async (job) => {
+        transcribing.push(job.id)
+        return job.id === '1' ? firstTranscription.promise : `result-${job.id}`
+      },
+    })
+
+    pipeline.enqueue(ids.map((id) => ({ id })))
+    await nextTurn()
+    expect(preparing).toEqual(ids)
+
+    preparations.forEach((gate) => gate.resolve('prepared'))
+    await nextTurn()
+    expect(transcribing).toEqual(['1'])
+
+    firstTranscription.resolve('result-1')
+    await pipeline.whenIdle()
+    expect(transcribing).toEqual(ids)
+  })
 })

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from './types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from './types'
 
 contextBridge.exposeInMainWorld('tingxie', {
   openFiles: (): Promise<SelectedMedia[]> => ipcRenderer.invoke('media:open'),
@@ -49,7 +49,14 @@ contextBridge.exposeInMainWorld('tingxie', {
   getAIChat: (transcriptId: string): Promise<AIChatSession> => ipcRenderer.invoke('ai:chat:get', transcriptId),
   clearAIChat: (transcriptId: string): Promise<AIChatSession> => ipcRenderer.invoke('ai:chat:clear', transcriptId),
   sendAIMessage: (input: { requestId: string; transcript: TranscriptResult; providerId?: string; userMessage?: string; mode?: 'new' | 'regenerate' }): Promise<AIChatSession> => ipcRenderer.invoke('ai:chat:send', input),
-  generateAnalysis: (input: { transcript: TranscriptResult; providerId?: string }): Promise<TranscriptResult> => ipcRenderer.invoke('ai:analysis:generate', input),
+  generateAnalysis: (input: { transcriptId: string; providerId?: string }): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:generate', input),
+  getAnalysisQueue: (): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:queue:get'),
+  retryAnalysis: (transcriptId: string): Promise<BackgroundAnalysisQueueSnapshot> => ipcRenderer.invoke('ai:analysis:retry', transcriptId),
+  onAnalysisQueue: (callback: (event: BackgroundAnalysisEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: BackgroundAnalysisEvent) => callback(value)
+    ipcRenderer.on('analysis:queue', listener)
+    return () => ipcRenderer.removeListener('analysis:queue', listener)
+  },
   cancelAIMessage: (requestId: string): Promise<boolean> => ipcRenderer.invoke('ai:chat:cancel', requestId),
   onAIStream: (callback: (event: AIStreamEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: AIStreamEvent) => callback(value)

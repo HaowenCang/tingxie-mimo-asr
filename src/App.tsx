@@ -1,7 +1,7 @@
 import { Circle, CircleCheck, LoaderCircle, WifiOff } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type PreparedTranscription, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
+import { DEFAULT_APP_PREFERENCES, type AIProvider, type AISettings, type AppPreferences, type BackgroundAnalysisQueueSnapshot, type Language, type MediaAsset, type MediaImportProgress, type MediaLibrarySnapshot, type PreparedTranscription, type ProgressEvent, type SelectedMedia, type ServiceMode, type TranscriptResult, type TranscriptSummary } from '../electron/types'
 import { DEFAULT_AI_SYSTEM_PROMPT } from '../electron/ai-system-prompt'
 import { summarizeTranscript } from '../electron/transcript-summary'
 import { QueuePanel } from './components/QueuePanel'
@@ -165,8 +165,8 @@ export function App() {
   const [chatOpen, setChatOpen] = useState(isDemo && demoParameters.has('markdown'))
   const [history, setHistory] = useState<TranscriptSummary[]>(isDemo ? demoHistory : [])
   const [loadingSettings, setLoadingSettings] = useState(!isDemo)
-  const [analysisBusy, setAnalysisBusy] = useState(false)
-  const [analysisError, setAnalysisError] = useState(isDemo && demoParameters.has('analysis-error') ? 'AI 返回的 JSON 格式无效；已自动修复重试 1 次，请稍后重试。' : '')
+  const [analysisQueue, setAnalysisQueue] = useState<BackgroundAnalysisQueueSnapshot>({ jobs: [] })
+  const [analysisLocalError, setAnalysisLocalError] = useState(isDemo && demoParameters.has('analysis-error') ? 'AI 返回的 JSON 格式无效；已自动修复重试 1 次，请稍后重试。' : '')
   const [chatPanelWidth, setChatPanelWidth] = useState(DEFAULT_CHAT_PANEL_WIDTH)
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [uploadPaneHeight, setUploadPaneHeight] = useState(DEFAULT_UPLOAD_PANE_HEIGHT)
@@ -181,7 +181,6 @@ export function App() {
   const progressFrameRef = useRef<number | undefined>(undefined)
   const mediaImportClearTimer = useRef<number | undefined>(undefined)
   const pendingProgressEventsRef = useRef(new Map<string, ProgressEvent>())
-  const autoAnalysisAttempted = useRef(new Set<string>())
 
   function handleCompletedPipelineJob(job: QueueFile, result: TranscriptResult) {
     if (!job.batchId) setSelectedResult(result)
@@ -284,14 +283,16 @@ export function App() {
   }, [settings.preferences.sidebarWidth, settings.preferences.uploadPaneHeight])
 
   useEffect(() => {
-    const concurrency = settings.preferences.parallelPreparation
-      ? settings.preferences.preparationConcurrency
-      : 1
-    pipelineRef.current?.setPreparationPolicy(concurrency, concurrency)
-  }, [settings.preferences.parallelPreparation, settings.preferences.preparationConcurrency])
+    const policy = settings.preferences.preparationMode === 'unlimited'
+      ? 'unlimited'
+      : settings.preferences.preparationMode === 'sequential'
+        ? 1
+        : settings.preferences.preparationConcurrency
+    pipelineRef.current?.setPreparationPolicy(policy, policy)
+  }, [settings.preferences.preparationMode, settings.preferences.preparationConcurrency])
 
   useEffect(() => {
-    if (!(isDemo && demoParameters.has('analysis-error'))) setAnalysisError('')
+    if (!(isDemo && demoParameters.has('analysis-error'))) setAnalysisLocalError('')
   }, [selectedResult?.id])
 
   useEffect(() => {
@@ -314,16 +315,6 @@ export function App() {
   }, [settings.preferences.chatPanelWidth])
 
   useEffect(() => {
-    if (!selectedResult || selectedResult.analysis || !settings.preferences.autoGenerateAnalysis || autoAnalysisAttempted.current.has(selectedResult.id)) return
-    autoAnalysisAttempted.current.add(selectedResult.id)
-    if (autoAnalysisAttempted.current.size > 200) {
-      const entries = [...autoAnalysisAttempted.current]
-      autoAnalysisAttempted.current = new Set(entries.slice(-100))
-    }
-    void generateAnalysis()
-  }, [selectedResult?.id, selectedResult?.analysis, settings.preferences.autoGenerateAnalysis])
-
-  useEffect(() => {
     if (!window.tingxie || isDemo) return
     loadStartupData(window.tingxie)
       .then((data) => {
@@ -342,15 +333,30 @@ export function App() {
         queueLoadedRef.current = true
       })
       .finally(() => setLoadingSettings(false))
+    void window.tingxie.getAnalysisQueue().then(setAnalysisQueue).catch(() => undefined)
     const unsubscribe = window.tingxie.onProgress(scheduleProgressUpdate)
     const unsubscribeImport = window.tingxie.onMediaImportProgress((progress) => {
       window.clearTimeout(mediaImportClearTimer.current)
       setMediaImportProgress(progress)
       if (progress.stage === 'complete') mediaImportClearTimer.current = window.setTimeout(() => setMediaImportProgress(undefined), 1800)
     })
+    const unsubscribeAnalysis = window.tingxie.onAnalysisQueue((event) => {
+      setAnalysisQueue(event.snapshot)
+      if (!event.completed) return
+      setHistory((current) => [event.completed!, ...current.filter((item) => item.id !== event.completed!.id)])
+      setRecentTranscripts((current) => current.some((item) => item.id === event.completed!.id)
+        ? addRecentTranscript(current, event.completed!)
+        : current)
+      void window.tingxie?.getTranscript(event.completed.id).then((result) => {
+        if (!result) return
+        setSelectedResult((current) => current?.id === result.id ? result : current)
+        setFiles((current) => current.map((file) => file.id === result.id ? { ...file, result } : file))
+      }).catch(() => undefined)
+    })
     return () => {
       unsubscribe()
       unsubscribeImport()
+      unsubscribeAnalysis()
       window.clearTimeout(mediaImportClearTimer.current)
       if (progressFrameRef.current !== undefined) cancelAnimationFrame(progressFrameRef.current)
       pendingProgressEventsRef.current.clear()
@@ -495,7 +501,7 @@ export function App() {
     setCurrentPage('new')
     setSelectedResult(undefined)
     setChatOpen(false)
-    setAnalysisError('')
+    setAnalysisLocalError('')
   }, [])
 
   function navigate(page: 'new' | 'library') {
@@ -560,7 +566,7 @@ export function App() {
   }, [])
 
   const generateAnalysis = useCallback(async () => {
-    if (!selectedResult || analysisBusy) return
+    if (!selectedResult) return
     const provider = aiSettings.providers.find((item) => item.id === aiSettings.selectedProviderId)
     if (!provider?.hasApiKey) {
       setSettingsSection('ai'); setShowSettings(true)
@@ -572,12 +578,13 @@ export function App() {
       if (window.tingxie) setAISettings(await window.tingxie.acknowledgeTokenPlan())
     }
     if (!window.tingxie) return
-    setAnalysisError('')
-    setAnalysisBusy(true)
-    try { updateResult(await window.tingxie.generateAnalysis({ transcript: selectedResult, providerId: provider.id }), false) }
-    catch (error) { setAnalysisError(friendlyIpcError(error, '智能速览生成失败')) }
-    finally { setAnalysisBusy(false) }
-  }, [selectedResult, analysisBusy, aiSettings, updateResult])
+    setAnalysisLocalError('')
+    try {
+      setAnalysisQueue(await window.tingxie.generateAnalysis({ transcriptId: selectedResult.id, providerId: provider.id }))
+    } catch (error) {
+      setAnalysisLocalError(friendlyIpcError(error, '智能速览生成失败'))
+    }
+  }, [selectedResult, aiSettings])
 
   const exportSelectedResult = useCallback(() => {
     if (selectedResult) void window.tingxie?.exportTranscript(selectedResult)
@@ -592,6 +599,15 @@ export function App() {
   }
 
   const doneCount = files.filter((file) => file.status === 'done').length
+  const selectedAnalysisJob = selectedResult
+    ? analysisQueue.jobs.find((job) => job.transcriptId === selectedResult.id)
+    : undefined
+  const analysisBusy = selectedAnalysisJob
+    ? ['queued', 'running', 'retry-wait'].includes(selectedAnalysisJob.status)
+    : false
+  const analysisError = analysisLocalError
+    || (selectedAnalysisJob?.status === 'blocked' || selectedAnalysisJob?.status === 'failed' ? selectedAnalysisJob.error || '智能速览生成失败' : '')
+  const pendingAnalysisCount = analysisQueue.jobs.filter((job) => ['queued', 'running', 'retry-wait'].includes(job.status)).length
   const queuedMediaIds = useMemo(() => new Set(files.flatMap((file) =>
     file.mediaId && !['done', 'partial', 'error', 'cancelled'].includes(file.status) ? [file.mediaId] : [])), [files])
   const isWorking = files.some((file) => ['waiting-preparation', 'preparing', 'extracting', 'ready', 'waiting-api', 'transcribing'].includes(file.status))
@@ -659,6 +675,7 @@ export function App() {
           onNewTranscript={openNewTranscriptWorkspace}
           analysisBusy={analysisBusy}
           analysisError={analysisError}
+          analysisStatus={selectedAnalysisJob?.status}
         /></Suspense> : null}
       </AnimatePresence>
         {currentPage === 'new' && chatOpen && selectedResult &&
@@ -674,7 +691,7 @@ export function App() {
         </AnimatePresence>
       {currentPage === 'new' && <footer className="status-bar">
         <span><Circle className={isWorking ? 'pulse-dot' : ''} size={9} fill="currentColor" />{files.length} 个文件<span>·</span>{doneCount} 个已完成</span>
-        <span>{isWorking ? '正在本机处理音频' : '就绪'}</span>
+        <span>{pendingAnalysisCount > 0 ? `智能速览后台任务 ${pendingAnalysisCount} 个` : isWorking ? '正在本机处理音频' : '就绪'}</span>
       </footer>}
       <AnimatePresence initial={false}>
       {showSettings && <Suspense key="settings" fallback={<div className="modal-backdrop"><DeferredView className="settings-modal deferred-panel" label="正在打开设置" /></div>}><SettingsModal

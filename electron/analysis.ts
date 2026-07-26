@@ -86,6 +86,26 @@ export class AnalysisFormatError extends Error {
   }
 }
 
+export class AnalysisRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly retryAfterMs?: number,
+  ) {
+    super(message)
+    this.name = 'AnalysisRequestError'
+  }
+}
+
+function responseRetryAfterMs(response: Response): number | undefined {
+  const value = response.headers.get('retry-after')
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000)
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : undefined
+}
+
 export function parseAnalysisJson(raw: string, transcript: TranscriptResult, provider: AnalysisProviderIdentity): TranscriptAnalysis {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
   const start = cleaned.indexOf('{')
@@ -128,6 +148,7 @@ export function parseAnalysisJson(raw: string, transcript: TranscriptResult, pro
     providerId: provider.id,
     model: provider.model,
     generatedAt: new Date().toISOString(),
+    sourceRevision: transcript.revision ?? 0,
   }
 }
 
@@ -168,7 +189,7 @@ export async function generateTranscriptAnalysis({
         jsonMode = false
         continue
       }
-      throw new Error(message)
+      throw new AnalysisRequestError(response.status, message, responseRetryAfterMs(response))
     }
 
     const value = payload as { choices?: Array<{ finish_reason?: string }> }

@@ -2,7 +2,7 @@ import { AlertTriangle, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Cloc
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AnimatePresence, m } from 'motion/react'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { AppPreferences, TranscriptAnalysis, TranscriptChapter, TranscriptDuplicateReport, TranscriptResult } from '../../electron/types'
+import type { AppPreferences, BackgroundAnalysisJobStatus, TranscriptAnalysis, TranscriptChapter, TranscriptDuplicateReport, TranscriptResult } from '../../electron/types'
 import { inspectTranscriptDuplicates } from '../../electron/transcript-dedup'
 import { formatDuration } from '../utils'
 import { AudioPlayer } from './AudioPlayer'
@@ -25,6 +25,7 @@ interface TranscriptDetailProps {
   onNewTranscript(): void
   analysisBusy: boolean
   analysisError: string
+  analysisStatus?: BackgroundAnalysisJobStatus
 }
 
 function transcriptText(segments: TranscriptResult['segments']): string {
@@ -44,7 +45,7 @@ function MarkedExcerpt({ match }: { match: TranscriptMatch }) {
   return <>{match.excerpt.slice(0, start)}<mark>{match.excerpt.slice(start, start + match.length)}</mark>{match.excerpt.slice(start + match.length)}</>
 }
 
-export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onPatchSegment, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError }: TranscriptDetailProps) {
+export const TranscriptDetail = memo(function TranscriptDetail({ result, preferences, onChange, onPatchSegment, onGenerateAnalysis, onExport, onOpenChat, onNewTranscript, analysisBusy, analysisError, analysisStatus }: TranscriptDetailProps) {
   const { fade, fadeUp, iconSwap, listItem } = useMotionVariants()
   const reducedMotion = useReducedMotionSetting()
   const [query, setQuery] = useState('')
@@ -212,7 +213,13 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
 
   const updateSegment = useCallback((index: number, patch: Partial<TranscriptResult['segments'][number]>, persist = true) => {
     const segments = result.segments.map((segment, segmentIndex) => segmentIndex === index ? { ...segment, ...patch } : segment)
-    onChange({ ...result, revision: (result.revision ?? 0) + 1, segments, text: transcriptText(segments) }, persist)
+    onChange({
+      ...result,
+      revision: (result.revision ?? 0) + 1,
+      segments,
+      text: transcriptText(segments),
+      analysis: result.analysis ? { ...result.analysis, status: 'stale' } : undefined,
+    }, persist)
   }, [result, onChange])
 
   const commitSegmentText = useCallback((index: number, text: string) => {
@@ -230,7 +237,7 @@ export const TranscriptDetail = memo(function TranscriptDetail({ result, prefere
 
     <div className="detail-scroll" ref={scrollRef}>
       <section className="smart-overview glass-section">
-        <header><div><span><Sparkles size={17} /></span><div><h2>智能速览</h2><p>由已保存的对话 API 基于当前原文生成</p></div></div><div>{result.analysis && <button className="icon-button" aria-label={overviewOpen ? '收起智能速览' : '展开智能速览'} aria-expanded={overviewOpen} onClick={() => setOverviewOpen((value) => !value)}><ChevronDown className={overviewOpen ? 'expanded' : ''} size={18} /></button>}<button className="primary-button compact" disabled={analysisBusy} onClick={onGenerateAnalysis}>{analysisBusy ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{result.analysis ? '重新生成' : '生成智能速览'}</button></div></header>
+        <header><div><span><Sparkles size={17} /></span><div><h2>智能速览</h2><p>{analysisStatus === 'queued' ? '已加入后台队列' : analysisStatus === 'running' ? '正在后台生成，不影响继续使用应用' : analysisStatus === 'retry-wait' ? '服务繁忙，正在等待自动重试' : result.analysis?.status === 'stale' ? '原文已修改，现有速览可能已过期' : '由已保存的对话 API 基于当前原文生成'}</p></div></div><div>{result.analysis && <button className="icon-button" aria-label={overviewOpen ? '收起智能速览' : '展开智能速览'} aria-expanded={overviewOpen} onClick={() => setOverviewOpen((value) => !value)}><ChevronDown className={overviewOpen ? 'expanded' : ''} size={18} /></button>}<button className="primary-button compact" disabled={analysisBusy} onClick={onGenerateAnalysis}>{analysisBusy ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{analysisStatus === 'queued' ? '等待生成' : analysisStatus === 'retry-wait' ? '等待重试' : analysisStatus === 'running' ? '正在生成' : result.analysis ? '重新生成' : '生成智能速览'}</button></div></header>
         {analysisError ? <div className="analysis-error" role="alert" aria-live="polite"><AlertTriangle size={17} /><div><strong>智能速览生成失败</strong><p>{analysisError}</p></div><button disabled={analysisBusy} onClick={onGenerateAnalysis}>重试</button></div> : null}
         <AnimatePresence initial={false}>{overviewOpen && <m.div className="smart-overview-content" initial={{ height: reducedMotion ? 'auto' : 0, opacity: reducedMotion ? 1 : 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: reducedMotion ? 'auto' : 0, opacity: reducedMotion ? 1 : 0 }} transition={{ duration: reducedMotion ? 0 : 0.24 }}>{result.analysis ? <>
           <div className="keyword-row">{result.analysis.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
