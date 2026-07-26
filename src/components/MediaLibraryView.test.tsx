@@ -23,6 +23,7 @@ describe('legacy transcript recovery', () => {
       onLibraryChange={() => undefined}
       onOpenTranscript={() => undefined}
       onTranscribe={() => undefined}
+      onBatchTranscribe={() => undefined}
       onImportFiles={() => undefined}
       onImportFolder={() => undefined}
     />)
@@ -56,6 +57,7 @@ describe('legacy transcript recovery', () => {
       onLibraryChange={() => undefined}
       onOpenTranscript={() => undefined}
       onTranscribe={() => undefined}
+      onBatchTranscribe={() => undefined}
       onImportFiles={() => undefined}
       onImportFolder={() => undefined}
     />)
@@ -73,6 +75,7 @@ describe('legacy transcript recovery', () => {
       onLibraryChange={() => undefined}
       onOpenTranscript={() => undefined}
       onTranscribe={() => undefined}
+      onBatchTranscribe={() => undefined}
       onImportFiles={() => undefined}
       onImportFolder={() => undefined}
     />)
@@ -95,6 +98,7 @@ describe('legacy transcript recovery', () => {
       onLibraryChange={() => undefined}
       onOpenTranscript={() => undefined}
       onTranscribe={() => undefined}
+      onBatchTranscribe={() => undefined}
       onImportFiles={() => undefined}
       onImportFolder={() => undefined}
     />)

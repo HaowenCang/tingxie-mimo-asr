@@ -12,7 +12,11 @@ export function applyLatestProgressEvents(files: QueueFile[], events: ProgressEv
     changed = true
     return {
       ...file,
-      status: event.stage === 'cancelled' ? 'cancelled' as const : event.stage,
+      status: event.stage === 'cancelled'
+        ? 'cancelled' as const
+        : event.stage === 'ready'
+          ? 'waiting-api' as const
+          : event.stage,
       progress: event.progress,
       detail: event.detail,
     }

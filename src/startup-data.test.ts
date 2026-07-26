@@ -15,6 +15,7 @@ describe('startup data loading', () => {
       getHistory: vi.fn().mockRejectedValue(new Error('history unavailable')),
       getAISettings: vi.fn().mockResolvedValue(aiSettings),
       getMediaLibrary: vi.fn().mockResolvedValue({ rootPath: 'D:/media', folders: [], assets: [] }),
+      getPendingTranscriptionQueue: vi.fn().mockResolvedValue([]),
     })
 
     expect(result.aiSettings).toBe(aiSettings)

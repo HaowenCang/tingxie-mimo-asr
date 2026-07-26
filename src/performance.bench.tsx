@@ -100,6 +100,7 @@ describe('performance baseline', () => {
       onLibraryChange={noChange}
       onOpenTranscript={noChange}
       onTranscribe={noChange}
+      onBatchTranscribe={noChange}
       onImportFiles={noChange}
       onImportFolder={noChange}
     />)
