@@ -75,6 +75,7 @@ import { MediaLibraryStore } from './media-library-store'
 import { planMediaImportConcurrency, shouldEmitImportProgress } from './media-import-performance'
 import { readPendingTranscriptionQueue, writePendingTranscriptionQueue } from './transcription-queue-store'
 import { cleanupStaleTranscriptionTempDirs } from './transcription-temp'
+import { buildTranscriptExportPlan, executeTranscriptExport } from './transcript-export'
 import {
   serviceEndpoint,
   DEFAULT_APP_PREFERENCES,
@@ -88,6 +89,7 @@ import {
   type BackgroundAnalysisEvent,
   type BackgroundAnalysisJob,
   type BackgroundAnalysisQueueSnapshot,
+  type BatchTranscriptExportResult,
   type Language,
   type MediaAsset,
   type MediaInfo,
@@ -103,6 +105,7 @@ import {
   type TranscriptResult,
   type TranscriptSummary,
   type TranscriptAnalysis,
+  type TranscriptExportInput,
   type TranscriptionInput,
 } from './types'
 
@@ -2234,6 +2237,31 @@ app.whenReady().then(async () => {
     if (output.canceled || !output.filePath) return false
     await fs.writeFile(output.filePath, result.text, 'utf8')
     return true
+  })
+
+  ipcMain.handle('transcript:export-many', async (_event, input: TranscriptExportInput): Promise<BatchTranscriptExportResult> => {
+    if (!input || !['txt', 'md'].includes(input.format) || !input.source) throw new Error('批量导出参数无效')
+    const settings = await readCachedSettings()
+    const library = publicMediaLibrary(settings, await readMediaLibrary(settings))
+    const history = await getTranscriptStore().listSummaries()
+    const plan = buildTranscriptExportPlan(input.source, library, history)
+    if (!plan.entries.length) {
+      return { canceled: false, exported: [], skipped: plan.skipped, failed: [] }
+    }
+    const output = await dialog.showOpenDialog(window, {
+      title: '选择转写导出文件夹',
+      buttonLabel: '导出到此文件夹',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    if (output.canceled || !output.filePaths[0]) {
+      return { canceled: true, exported: [], skipped: plan.skipped, failed: [] }
+    }
+    return executeTranscriptExport(plan, output.filePaths[0], input.format, (id) => getTranscriptStore().get(id))
+  })
+
+  ipcMain.handle('transcript:export:open-directory', async (_event, directory: string): Promise<boolean> => {
+    if (!directory || !(await fs.stat(directory).catch(() => undefined))?.isDirectory()) return false
+    return (await shell.openPath(path.resolve(directory))) === ''
   })
 
   ipcMain.handle('transcript:copy', (_event, text: string) => {

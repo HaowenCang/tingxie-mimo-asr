@@ -1,4 +1,4 @@
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from '../electron/types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, BatchTranscriptExportResult, Language, MediaImportProgress, MediaImportResult, MediaInfo, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptExportInput, TranscriptResult, TranscriptSummary, TranscriptionInput } from '../electron/types'
 
 declare global {
   interface Window {
@@ -62,6 +62,8 @@ declare global {
       deleteTranscripts(ids: string[]): Promise<string[]>
       copyText(text: string): Promise<boolean>
       exportTranscript(result: TranscriptResult): Promise<boolean>
+      exportTranscripts(input: TranscriptExportInput): Promise<BatchTranscriptExportResult>
+      openExportDirectory(directory: string): Promise<boolean>
     }
   }
 }

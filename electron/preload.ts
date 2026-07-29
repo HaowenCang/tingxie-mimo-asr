@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptResult, TranscriptSummary, TranscriptionInput } from './types'
+import type { AIChatSession, AIProvider, AISettings, AIStreamEvent, AppPreferences, BackgroundAnalysisEvent, BackgroundAnalysisQueueSnapshot, BatchTranscriptExportResult, Language, MediaImportProgress, MediaImportResult, MediaLibrarySnapshot, PendingTranscriptionJob, PreparedTranscription, ProgressEvent, SelectedMedia, ServiceMode, TranscriptDuplicateRepairResult, TranscriptDuplicateReport, TranscriptExportInput, TranscriptResult, TranscriptSummary, TranscriptionInput } from './types'
 
 contextBridge.exposeInMainWorld('tingxie', {
   openFiles: (): Promise<SelectedMedia[]> => ipcRenderer.invoke('media:open'),
@@ -78,4 +78,6 @@ contextBridge.exposeInMainWorld('tingxie', {
   deleteTranscripts: (ids: string[]): Promise<string[]> => ipcRenderer.invoke('history:delete-many', ids),
   copyText: (text: string) => ipcRenderer.invoke('transcript:copy', text),
   exportTranscript: (result: TranscriptResult) => ipcRenderer.invoke('transcript:export', result),
+  exportTranscripts: (input: TranscriptExportInput): Promise<BatchTranscriptExportResult> => ipcRenderer.invoke('transcript:export-many', input),
+  openExportDirectory: (directory: string): Promise<boolean> => ipcRenderer.invoke('transcript:export:open-directory', directory),
 })

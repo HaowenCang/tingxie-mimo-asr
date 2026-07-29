@@ -1,8 +1,8 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { CheckSquare, ChevronRight, ExternalLink, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderPlus, Library, ListPlus, Move, Pencil, Play, Search, Square, Trash2, Upload, X } from 'lucide-react'
+import { CheckSquare, ChevronRight, Download, ExternalLink, FileAudio, FileClock, FilePlus2, FileText, Folder, FolderInput, FolderOpen, FolderPlus, Library, ListPlus, Move, Pencil, Play, Search, Square, Trash2, Upload, X } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent } from 'react'
-import { DEFAULT_APP_PREFERENCES, type AppPreferences, type MediaAsset, type MediaFolder, type MediaImportProgress, type MediaLibrarySnapshot, type TranscriptSummary } from '../../electron/types'
+import { DEFAULT_APP_PREFERENCES, type AppPreferences, type BatchTranscriptExportResult, type MediaAsset, type MediaFolder, type MediaImportProgress, type MediaLibrarySnapshot, type TranscriptExportFormat, type TranscriptExportSource, type TranscriptSummary } from '../../electron/types'
 import { formatBytes, formatDuration } from '../utils'
 import { GlassSelect } from './GlassSelect'
 import { GlassContextMenu, type GlassContextMenuEntry } from './GlassContextMenu'
@@ -61,6 +61,69 @@ function selectionIds(keys: Iterable<string>, prefix: 'asset' | 'transcript'): s
   return [...keys].flatMap((key) => key.startsWith(marker) ? [key.slice(marker.length)] : [])
 }
 
+interface TranscriptExportDialogState {
+  source: TranscriptExportSource
+  title: string
+  skippedHint: number
+}
+
+interface TranscriptExportPreview {
+  transcriptCount: number
+  skippedCount: number
+  partialCount: number
+  failedCount: number
+}
+
+function buildTranscriptExportPreview(
+  request: TranscriptExportDialogState,
+  library: MediaLibrarySnapshot,
+  history: TranscriptSummary[],
+): TranscriptExportPreview {
+  const summaryById = new Map(history.map((summary) => [summary.id, summary]))
+  if (request.source.kind === 'selection') {
+    const summaries = [...new Set(request.source.transcriptIds)].flatMap((id) => {
+      const summary = summaryById.get(id)
+      return summary ? [summary] : []
+    })
+    return {
+      transcriptCount: summaries.length,
+      skippedCount: request.skippedHint + request.source.transcriptIds.length - summaries.length,
+      partialCount: summaries.filter((summary) => summary.outcome === 'partial').length,
+      failedCount: summaries.filter((summary) => summary.outcome === 'failed').length,
+    }
+  }
+
+  const includedFolderIds = request.source.kind === 'folder'
+    ? request.source.includeDescendants
+      ? folderDescendants(library.folders, request.source.folderId).add(request.source.folderId)
+      : new Set([request.source.folderId])
+    : undefined
+  const inScope = (folderId?: string) => request.source.kind === 'all'
+    ? true
+    : Boolean(folderId && includedFolderIds?.has(folderId))
+  const linkedTranscriptIds = new Set(library.assets.flatMap((asset) => asset.transcriptId ? [asset.transcriptId] : []))
+  const transcriptIds = new Set<string>()
+  let skippedCount = 0
+  for (const asset of library.assets) {
+    if (!inScope(asset.folderId)) continue
+    if (asset.transcriptId && summaryById.has(asset.transcriptId)) transcriptIds.add(asset.transcriptId)
+    else skippedCount += 1
+  }
+  for (const summary of history) {
+    if (!linkedTranscriptIds.has(summary.id) && inScope(summary.folderId)) transcriptIds.add(summary.id)
+  }
+  const summaries = [...transcriptIds].flatMap((id) => {
+    const summary = summaryById.get(id)
+    return summary ? [summary] : []
+  })
+  return {
+    transcriptCount: summaries.length,
+    skippedCount,
+    partialCount: summaries.filter((summary) => summary.outcome === 'partial').length,
+    failedCount: summaries.filter((summary) => summary.outcome === 'failed').length,
+  }
+}
+
 function AutoGrowNameEditor({ value, focusRequest, onChange, onSave, onCancel }: { value: string; focusRequest: number; onChange(value: string): void; onSave(): void; onCancel(): void }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
@@ -107,6 +170,10 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
   const [error, setError] = useState('')
   const [batchDialogOpen, setBatchDialogOpen] = useState(false)
   const [includeFailedInBatch, setIncludeFailedInBatch] = useState(false)
+  const [exportDialog, setExportDialog] = useState<TranscriptExportDialogState>()
+  const [exportFormat, setExportFormat] = useState<TranscriptExportFormat>('txt')
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportResult, setExportResult] = useState<BatchTranscriptExportResult>()
   const [folderPaneWidth, setFolderPaneWidth] = useState(preferences.libraryFolderWidth)
   const [inspectorPaneWidth, setInspectorPaneWidth] = useState(preferences.libraryInspectorWidth)
   const tableScrollRef = useRef<HTMLDivElement>(null)
@@ -130,6 +197,18 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
     const asset = derived.assetById.get(id)
     return asset ? [asset] : []
   }), [derived.assetById, selectedAssetIds])
+  const selectedExportTranscriptIds = useMemo(() => {
+    const ids = new Set(selectedTranscriptIds)
+    for (const asset of selectedAssets) {
+      if (asset.transcriptId && derived.transcriptById.has(asset.transcriptId)) ids.add(asset.transcriptId)
+    }
+    return [...ids].filter((id) => derived.transcriptById.has(id))
+  }, [derived.transcriptById, selectedAssets, selectedTranscriptIds])
+  const selectedExportSkippedCount = selectedAssets.filter((asset) => !asset.transcriptId || !derived.transcriptById.has(asset.transcriptId)).length
+  const exportPreview = useMemo(
+    () => exportDialog ? buildTranscriptExportPreview(exportDialog, library, history) : undefined,
+    [exportDialog, history, library],
+  )
   const batchPlan = useMemo(() => planBatchTranscription(selectedAssets, queuedMediaIds, includeFailedInBatch), [includeFailedInBatch, queuedMediaIds, selectedAssets])
   const batchEligibleAssets = batchPlan.eligible
   const batchDuration = useMemo(() => batchEligibleAssets.reduce((sum, asset) => sum + (asset.duration || 0), 0), [batchEligibleAssets])
@@ -290,10 +369,55 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
     setRenameFocusRequest((value) => value + 1)
   }
 
-  async function exportSummary(summary: TranscriptSummary) {
-    if (!window.tingxie) return
-    const result = await window.tingxie.getTranscript(summary.id)
-    if (result) await window.tingxie.exportTranscript(result)
+  function transcriptIdsForKeys(keys: Set<string>): string[] {
+    const ids = new Set(selectionIds(keys, 'transcript'))
+    for (const assetId of selectionIds(keys, 'asset')) {
+      const transcriptId = derived.assetById.get(assetId)?.transcriptId
+      if (transcriptId && derived.transcriptById.has(transcriptId)) ids.add(transcriptId)
+    }
+    return [...ids].filter((id) => derived.transcriptById.has(id))
+  }
+
+  function openExportDialog(source: TranscriptExportSource, title: string, skippedHint = 0) {
+    setExportFormat('txt')
+    setExportResult(undefined)
+    setExportDialog({ source, title, skippedHint })
+  }
+
+  function closeExportDialog() {
+    if (exportBusy) return
+    setExportDialog(undefined)
+    setExportResult(undefined)
+  }
+
+  function setExportIncludeDescendants(includeDescendants: boolean) {
+    setExportDialog((current) => current?.source.kind === 'folder'
+      ? { ...current, source: { ...current.source, includeDescendants } }
+      : current)
+  }
+
+  function setExportPreserveStructure(preserveStructure: boolean) {
+    setExportDialog((current) => {
+      if (!current || current.source.kind === 'selection') return current
+      return { ...current, source: { ...current.source, preserveStructure } }
+    })
+  }
+
+  async function exportTranscripts() {
+    if (!window.tingxie || !exportDialog) return
+    setError('')
+    setExportBusy(true)
+    try {
+      const result = await window.tingxie.exportTranscripts({ source: exportDialog.source, format: exportFormat })
+      if (!result.canceled) {
+        setExportResult(result)
+        if (result.exported.length) setRecoveryMessage(`已导出 ${result.exported.length} 条转写`)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '批量导出转写失败')
+    } finally {
+      setExportBusy(false)
+    }
   }
 
   function rowContextEntries(row: MediaLibraryRow, rowKey: string, linkedTranscript?: TranscriptSummary): GlassContextMenuEntry[] {
@@ -303,14 +427,14 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
       : linkedTranscript
         ? () => onOpenTranscript(linkedTranscript)
         : () => onTranscribe(row.asset)
-    const transcript = row.kind === 'history' ? row.transcript : linkedTranscript
+    const exportIds = transcriptIdsForKeys(keys)
     const entries: GlassContextMenuEntry[] = [
       { type: 'action', id: 'open', label: row.kind === 'asset' && !linkedTranscript ? '开始转写' : '打开转写', icon: <Play size={14} />, onSelect: open },
       ...(row.kind === 'asset' ? [{ type: 'action' as const, id: 'show-file', label: '在文件夹中显示', icon: <ExternalLink size={14} />, onSelect: () => void window.tingxie?.showMediaItem(row.asset.id) }] : []),
       { type: 'action', id: 'rename', label: '重命名', icon: <Pencil size={14} />, onSelect: () => requestRename(rowKey) },
       { type: 'submenu', id: 'move', label: keys.size > 1 ? '移动所选项目到' : '移动到', icon: <Move size={14} />, children: moveSelectionEntries(keys) },
     ]
-    if (transcript) entries.push({ type: 'action', id: 'export', label: '导出转写', icon: <ExternalLink size={14} />, onSelect: () => void exportSummary(transcript) })
+    if (exportIds.length) entries.push({ type: 'action', id: 'export', label: exportIds.length > 1 ? `导出所选 ${exportIds.length} 条转写` : '导出转写', icon: <Download size={14} />, onSelect: () => openExportDialog({ kind: 'selection', transcriptIds: exportIds }, exportIds.length > 1 ? `导出所选 ${exportIds.length} 条转写` : '导出转写') })
     entries.push({ type: 'separator', id: 'delete-separator' })
     if (row.kind === 'asset') {
       entries.push({ type: 'action', id: 'delete-media', label: keys.size > 1 ? '删除所选项目' : '删除媒体，保留转写', icon: <Trash2 size={14} />, danger: true, onSelect: () => void deleteItems(keys) })
@@ -328,13 +452,14 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
       { type: 'action', id: 'new-child', label: '新建子文件夹', icon: <FolderPlus size={14} />, onSelect: () => { setScope({ kind: 'folder', folderId: folder.id }); setCreatingChildFor(folder.id); setMovingFolderId(undefined); setChildFolderName(''); setExpandedFolders((current) => new Set(current).add(folder.id)) } },
       { type: 'action', id: 'rename', label: '重命名', icon: <Pencil size={14} />, onSelect: () => { setScope({ kind: 'folder', folderId: folder.id }); setEditingFolderId(folder.id); setFolderDraft(folder.name); setCreatingChildFor(undefined); setMovingFolderId(undefined) } },
       { type: 'submenu', id: 'move', label: '移动到', icon: <Move size={14} />, children: folderOptions.map((option) => ({ type: 'action' as const, id: `folder-move-${option.value}`, label: typeof option.label === 'string' ? option.label : option.value, disabled: option.value === folder.id || descendants.has(option.value), onSelect: () => void run(() => window.tingxie!.moveMediaFolder(folder.id, option.value === '__root' ? undefined : option.value)) })) },
+      { type: 'action', id: 'export', label: '导出此文件夹的转写', icon: <Download size={14} />, onSelect: () => openExportDialog({ kind: 'folder', folderId: folder.id, includeDescendants: true, preserveStructure: true }, `导出“${folder.name}”`) },
       { type: 'separator', id: 'delete-separator' },
       { type: 'action', id: 'delete', label: '删除文件夹', icon: <Trash2 size={14} />, danger: true, onSelect: () => setDeleteFolderId(folder.id) },
     ]
   }
 
   return <m.main layout variants={fadeUp} initial="initial" animate="animate" exit="exit" className="library-page">
-    <header className="library-header"><div><h1>媒体库</h1><p>录音由应用安全保管，可用多级文件夹整理并批量操作</p></div><div className="library-header-actions"><button className="soft-button" onClick={() => onImportFolder(scopedFolderId)}><FolderInput size={17} />导入文件夹</button><button className="primary-button" onClick={() => onImportFiles(scopedFolderId)}><Upload size={17} />导入音视频</button></div></header>
+    <header className="library-header"><div><h1>媒体库</h1><p>录音由应用安全保管，可用多级文件夹整理并批量操作</p></div><div className="library-header-actions"><button className="soft-button" onClick={() => openExportDialog({ kind: 'all', preserveStructure: true }, '导出全部转写')}><Download size={17} />导出全部</button><button className="soft-button" onClick={() => onImportFolder(scopedFolderId)}><FolderInput size={17} />导入文件夹</button><button className="primary-button" onClick={() => onImportFiles(scopedFolderId)}><Upload size={17} />导入音视频</button></div></header>
     <section ref={libraryShellRef} className="library-shell glass-card" style={{ '--library-folder-width': `${folderPaneWidth}px`, '--library-inspector-width': `${inspectorPaneWidth}px` } as CSSProperties}>
       <aside className="folder-rail" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleFolderDrop(event)}>
         <div className="folder-rail-title"><Library size={17} />分组</div>
@@ -366,7 +491,7 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
         <div className="library-toolbar"><label className="library-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称或格式" />{query && <button onClick={() => setQuery('')} aria-label="清除搜索"><X size={14} /></button>}</label><GlassSelect size="compact" ariaLabel="转写状态筛选" value={status} options={[{ value: 'all', label: '全部状态' }, { value: 'untranscribed', label: '未转写' }, { value: 'transcribed', label: '已转写' }, { value: 'partial', label: '部分完成' }, { value: 'failed', label: '失败' }]} onValueChange={(value) => setStatus(value as typeof status)} /></div>
         <AnimatePresence initial={false}>{importProgress && <m.div variants={listItem} initial="initial" animate="animate" exit="exit" className="library-import-progress" role="status" aria-live="polite"><span>{importProgress.detail}</span><progress max={Math.max(1, importProgress.total)} value={importProgress.total ? importProgress.completed : undefined} /></m.div>}</AnimatePresence>
         <AnimatePresence initial={false}>{(recoveryMessage || error) && <m.div variants={listItem} initial="initial" animate="animate" exit="exit" className={error ? 'library-recovery-message error' : 'library-recovery-message'} role="status">{error || recoveryMessage}</m.div>}</AnimatePresence>
-        <AnimatePresence initial={false}>{selected.size > 0 && <m.div layout variants={listItem} initial="initial" animate="animate" exit="exit" className="batch-bar"><span><CheckSquare size={16} />已选择 {selectedAssetIds.length ? `${selectedAssetIds.length} 个媒体` : ''}{selectedAssetIds.length && selectedTranscriptIds.length ? '、' : ''}{selectedTranscriptIds.length ? `${selectedTranscriptIds.length} 个转写` : ''}</span>{selectedAssetIds.length > 0 && <button className="batch-transcribe-button" onClick={() => { setIncludeFailedInBatch(false); setBatchDialogOpen(true) }}><ListPlus size={15} />批量转写</button>}<GlassSelect className="folder-path-select" contentClassName="folder-path-select-content" size="compact" ariaLabel="移动所选项目" placeholder="移动到…" value="" options={folderOptions} onValueChange={(value) => void moveItems(value === '__root' ? undefined : value)} /><button className="danger-button" onClick={() => void deleteItems(new Set(selected))}><Trash2 size={15} />删除所选</button><button onClick={() => setSelected(new Set())}>取消</button></m.div>}</AnimatePresence>
+        <AnimatePresence initial={false}>{selected.size > 0 && <m.div layout variants={listItem} initial="initial" animate="animate" exit="exit" className="batch-bar"><span><CheckSquare size={16} />已选择 {selectedAssetIds.length ? `${selectedAssetIds.length} 个媒体` : ''}{selectedAssetIds.length && selectedTranscriptIds.length ? '、' : ''}{selectedTranscriptIds.length ? `${selectedTranscriptIds.length} 个转写` : ''}</span>{selectedAssetIds.length > 0 && <button className="batch-transcribe-button" onClick={() => { setIncludeFailedInBatch(false); setBatchDialogOpen(true) }}><ListPlus size={15} />批量转写</button>}{selectedExportTranscriptIds.length > 0 && <button onClick={() => openExportDialog({ kind: 'selection', transcriptIds: selectedExportTranscriptIds }, `导出所选 ${selectedExportTranscriptIds.length} 条转写`, selectedExportSkippedCount)}><Download size={15} />导出转写（{selectedExportTranscriptIds.length}）</button>}<GlassSelect className="folder-path-select" contentClassName="folder-path-select-content" size="compact" ariaLabel="移动所选项目" placeholder="移动到…" value="" options={folderOptions} onValueChange={(value) => void moveItems(value === '__root' ? undefined : value)} /><button className="danger-button" onClick={() => void deleteItems(new Set(selected))}><Trash2 size={15} />删除所选</button><button onClick={() => setSelected(new Set())}>取消</button></m.div>}</AnimatePresence>
         <div className="library-table" role="table" aria-label="媒体文件">
           <div className="library-table-head" role="row"><button onClick={() => setSelected((current) => { const next = new Set(current); for (const key of visibleSelectionKeys) { if (allVisibleSelected) next.delete(key); else next.add(key) } return next })} aria-label="全选可见项目">{allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}</button><span>名称</span><span>时长</span><span>大小</span><span>状态</span><span>导入时间</span></div>
           <div ref={tableScrollRef} className="library-table-scroll" data-virtualized="true">{rows.length ? <div className="library-virtual-rows" style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>{rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -416,6 +541,30 @@ export const MediaLibraryView = memo(function MediaLibraryView({ library, histor
       </div>}
       {selectedAssets.some((asset) => asset.transcriptStatus === 'failed') && <label className="concurrency-setting batch-retry-setting"><span><strong>同时重试失败媒体</strong><small>已转写和部分完成的媒体仍不会重复加入</small></span><input type="checkbox" checked={includeFailedInBatch} onChange={(event) => setIncludeFailedInBatch(event.target.checked)} /><span className="toggle" aria-hidden="true"><i /></span></label>}
       <footer><button className="secondary-button" onClick={() => setBatchDialogOpen(false)}>取消</button><button className="primary-button compact" disabled={!batchEligibleAssets.length} onClick={() => { onBatchTranscribe(selectedAssets, includeFailedInBatch); setBatchDialogOpen(false); setSelected(new Set()) }}><ListPlus size={16} />加入 {batchEligibleAssets.length} 个任务</button></footer>
+    </m.section></m.div>}</AnimatePresence>
+    <AnimatePresence initial={false}>{exportDialog && <m.div variants={fade} initial="initial" animate="animate" exit="exit" className="modal-backdrop transcript-export-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeExportDialog() }}><m.section variants={dialogPanel} initial="initial" animate="animate" exit="exit" className="transcript-export-dialog glass-card" role="dialog" aria-modal="true" aria-labelledby="transcript-export-title">
+      <div className="batch-dialog-icon"><Download size={22} /></div>
+      <h2 id="transcript-export-title">{exportResult ? '转写导出完成' : exportDialog.title}</h2>
+      {exportResult ? <>
+        <p role="status" aria-live="polite">成功导出 <strong>{exportResult.exported.length}</strong> 条转写{exportResult.skipped.length ? `，跳过 ${exportResult.skipped.length} 项` : ''}{exportResult.failed.length ? `，失败 ${exportResult.failed.length} 项` : ''}。</p>
+        {exportResult.directory && <div className="export-directory"><span>导出位置</span><code title={exportResult.directory}>{exportResult.directory}</code></div>}
+        {(exportResult.skipped.length > 0 || exportResult.failed.length > 0) && <div className="batch-skip-summary">
+          {exportResult.skipped.length > 0 && <span>跳过 {exportResult.skipped.length} 项</span>}
+          {exportResult.failed.length > 0 && <span className="export-failed-count">失败 {exportResult.failed.length} 项</span>}
+        </div>}
+        <footer><button className="secondary-button" onClick={closeExportDialog}>关闭</button>{exportResult.directory && <button className="primary-button compact" onClick={() => void window.tingxie?.openExportDirectory(exportResult.directory!)}><FolderOpen size={16} />打开文件夹</button>}</footer>
+      </> : <>
+        <p>将导出 <strong>{exportPreview?.transcriptCount || 0}</strong> 条转写。每条转写生成一个独立文件，已有文件不会被覆盖。</p>
+        <label className="export-format-field"><span>导出格式</span><GlassSelect size="compact" ariaLabel="转写导出格式" value={exportFormat} options={[{ value: 'txt', label: '纯文本（TXT）' }, { value: 'md', label: 'Markdown（MD）' }]} onValueChange={(value) => setExportFormat(value as TranscriptExportFormat)} /></label>
+        {exportDialog.source.kind === 'folder' && <label className="concurrency-setting batch-retry-setting"><span><strong>包含子文件夹</strong><small>同时导出当前文件夹下所有层级的转写</small></span><input type="checkbox" checked={exportDialog.source.includeDescendants} onChange={(event) => setExportIncludeDescendants(event.target.checked)} /><span className="toggle" aria-hidden="true"><i /></span></label>}
+        {exportDialog.source.kind !== 'selection' && <label className="concurrency-setting batch-retry-setting"><span><strong>保留文件夹结构</strong><small>关闭后所有转写将平铺到同一个导出文件夹</small></span><input type="checkbox" checked={exportDialog.source.preserveStructure} onChange={(event) => setExportPreserveStructure(event.target.checked)} /><span className="toggle" aria-hidden="true"><i /></span></label>}
+        {Boolean(exportPreview && (exportPreview.skippedCount || exportPreview.partialCount || exportPreview.failedCount)) && <div className="batch-skip-summary">
+          {Boolean(exportPreview?.skippedCount) && <span>跳过未转写或缺失项目 {exportPreview!.skippedCount} 个</span>}
+          {Boolean(exportPreview?.partialCount) && <span>包含部分完成记录 {exportPreview!.partialCount} 条</span>}
+          {Boolean(exportPreview?.failedCount) && <span>包含失败记录 {exportPreview!.failedCount} 条</span>}
+        </div>}
+        <footer><button className="secondary-button" disabled={exportBusy} onClick={closeExportDialog}>取消</button><button className="primary-button compact" disabled={exportBusy || !exportPreview?.transcriptCount} onClick={() => void exportTranscripts()}><Download size={16} />{exportBusy ? '正在导出…' : `选择文件夹并导出 ${exportPreview?.transcriptCount || 0} 条`}</button></footer>
+      </>}
     </m.section></m.div>}</AnimatePresence>
     <AnimatePresence initial={false}>{deleteFolder && <m.div variants={fade} initial="initial" animate="animate" exit="exit" className="modal-backdrop folder-delete-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteFolderId(undefined) }}><m.section variants={dialogPanel} initial="initial" animate="animate" exit="exit" className="folder-delete-dialog glass-card" role="dialog" aria-modal="true" aria-labelledby="delete-folder-title"><div className="delete-folder-icon"><Trash2 size={21} /></div><h2 id="delete-folder-title">删除“{deleteFolder.name}”</h2><p>包含 {deleteDescendants.size} 个子文件夹、{deleteAssetCount} 个媒体文件、{deleteTranscriptCount} 条纯文字转写。文字转写会安全移到上一级；请选择媒体文件的处理方式。</p><button className="secondary-button" onClick={() => void deleteFolderWithMode(deleteFolder, 'preserve-content')}>仅删除文件夹，内容移到上一级</button><button className="danger-button" onClick={() => void deleteFolderWithMode(deleteFolder, 'delete-media')}>删除文件夹及其媒体文件</button><button className="text-button" onClick={() => setDeleteFolderId(undefined)}>取消</button></m.section></m.div>}</AnimatePresence>
   </m.main>
