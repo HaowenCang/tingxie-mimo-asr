@@ -613,6 +613,7 @@ html.resizing-chat-panel, html.resizing-chat-panel * { cursor: col-resize !impor
 .batch-bar > span, .batch-bar label { display: flex; align-items: center; gap: 6px; }
 .batch-bar > span { margin-right: auto; }
 .batch-bar select, .batch-bar button { height: 32px; padding: 0 9px; border: 1px solid rgba(255,255,255,.78); border-radius: 10px; color: var(--text-soft); background: rgba(255,255,255,.52); cursor: pointer; }
+.batch-bar button { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .batch-bar .batch-transcribe-button { display: inline-flex; align-items: center; gap: 6px; color: #fff; border-color: rgba(255,255,255,.72); background: linear-gradient(145deg,var(--blue),var(--blue-strong)); box-shadow: 0 5px 14px rgba(10,132,255,.18); }
 .library-table { min-height: 0; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .library-table-scroll { min-height: 0; flex: 1; overflow: auto; }
@@ -1040,6 +1041,18 @@ html[data-theme='dark'] .settings-modal { background: linear-gradient(145deg,rgb
 .settings-warning { margin: 2px 0 0; padding: 10px 12px; border: 1px solid rgba(219,145,44,.22); border-radius: 12px; color: #98631d; background: rgba(255,244,219,.42); font-size: var(--caption-font-size); line-height: 1.55; }
 .batch-retry-setting { margin: 0; }
 .batch-transcription-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.transcript-export-backdrop { z-index: 10000; }
+.transcript-export-dialog { width: min(520px,calc(100vw - 32px)); padding: 25px; border-radius: 26px; display: grid; gap: 14px; }
+.transcript-export-dialog h2, .transcript-export-dialog p { margin: 0; }
+.transcript-export-dialog > p { color: var(--muted); line-height: 1.55; }
+.transcript-export-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
+.transcript-export-dialog footer button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.export-format-field { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; color: var(--text-soft); font-size: var(--caption-font-size); }
+.export-format-field .glass-select-trigger { min-width: 170px; }
+.export-directory { min-width: 0; padding: 11px 12px; border: 1px solid rgba(255,255,255,.72); border-radius: 14px; display: grid; gap: 5px; background: rgba(255,255,255,.38); }
+.export-directory span { color: var(--muted); font-size: var(--caption-font-size); }
+.export-directory code { overflow: hidden; color: var(--text-soft); font-family: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.export-failed-count { color: var(--red); }
 .delete-folder-icon { width: 48px; height: 48px; margin: 0 auto; border-radius: 16px; display: grid; place-items: center; color: var(--red); background: rgba(255,225,230,.68); }
 
 /* Liquid Glass context menus. Native text controls are intentionally not wrapped. */
@@ -1074,7 +1087,7 @@ html[data-theme='dark'] .settings-modal { background: linear-gradient(145deg,rgb
   .glass-select-trigger, .glass-select-content, .glass-context-content { background: var(--surface-solid); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 @media (forced-colors: active) {
-  .glass-select-trigger, .glass-select-content, .glass-context-content, .folder-delete-dialog { border: 1px solid CanvasText; background: Canvas; box-shadow: none; backdrop-filter: none; }
+  .glass-select-trigger, .glass-select-content, .glass-context-content, .folder-delete-dialog, .transcript-export-dialog { border: 1px solid CanvasText; background: Canvas; box-shadow: none; backdrop-filter: none; }
 }
 html[data-theme='dark'] .glass-select-trigger, html[data-theme='dark'] .glass-select-content { border-color: rgba(255,255,255,.14); background: linear-gradient(145deg,rgba(42,56,78,.9),rgba(20,29,44,.86)); box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 18px 42px rgba(0,0,0,.24); }
 html[data-theme='dark'] .glass-select-item[data-highlighted] { background: rgba(72,119,188,.36); }

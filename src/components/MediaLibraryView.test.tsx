@@ -106,6 +106,7 @@ describe('legacy transcript recovery', () => {
     expect(markup).toContain('data-folder-depth="1"')
     expect(markup).toContain('aria-label="根文件夹名称"')
     expect(markup).toContain('创建根文件夹')
+    expect(markup).toContain('导出全部')
     expect(markup).not.toContain('folder-action-menu')
   })
 })

@@ -179,6 +179,38 @@ export interface TranscriptSummary {
   analysisStatus: 'none' | 'ready' | 'error' | 'stale'
 }
 
+export type TranscriptExportFormat = 'txt' | 'md'
+
+export type TranscriptExportSource =
+  | { kind: 'selection'; transcriptIds: string[] }
+  | { kind: 'folder'; folderId: string; includeDescendants: boolean; preserveStructure: boolean }
+  | { kind: 'all'; preserveStructure: boolean }
+
+export interface TranscriptExportInput {
+  source: TranscriptExportSource
+  format: TranscriptExportFormat
+}
+
+export interface TranscriptExportedItem {
+  transcriptId: string
+  fileName: string
+  relativePath: string
+}
+
+export interface TranscriptExportIssue {
+  itemId?: string
+  fileName?: string
+  reason: string
+}
+
+export interface BatchTranscriptExportResult {
+  canceled: boolean
+  directory?: string
+  exported: TranscriptExportedItem[]
+  skipped: TranscriptExportIssue[]
+  failed: TranscriptExportIssue[]
+}
+
 export type BackgroundAnalysisJobStatus = 'queued' | 'running' | 'retry-wait' | 'blocked' | 'failed' | 'dismissed'
 
 export interface BackgroundAnalysisJob {
